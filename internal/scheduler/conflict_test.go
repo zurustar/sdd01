@@ -71,11 +71,11 @@ func TestDetectConflicts(t *testing.T) {
 		}
 	})
 
-	t.Run("non-overlapping schedules yield no conflicts", func(t *testing.T) {
-		existing := []Schedule{
-			{
-				ID:           "existing-none",
-				Participants: []string{"alice"},
+        t.Run("non-overlapping schedules yield no conflicts", func(t *testing.T) {
+                existing := []Schedule{
+                        {
+                                ID:           "existing-none",
+                                Participants: []string{"alice"},
 				Start:        mustParseTime(t, "2024-03-01T08:00:00+09:00"),
 				End:          mustParseTime(t, "2024-03-01T09:00:00+09:00"),
 			},
@@ -88,10 +88,33 @@ func TestDetectConflicts(t *testing.T) {
 			End:          mustParseTime(t, "2024-03-01T10:00:00+09:00"),
 		}
 
-		if conflicts := DetectConflicts(existing, candidate); len(conflicts) != 0 {
-			t.Fatalf("expected no conflicts, got %#v", conflicts)
-		}
-	})
+                if conflicts := DetectConflicts(existing, candidate); len(conflicts) != 0 {
+                        t.Fatalf("expected no conflicts, got %#v", conflicts)
+                }
+        })
+
+        t.Run("ignores candidate schedule when IDs match", func(t *testing.T) {
+                scheduleID := "shared-id"
+                existing := []Schedule{
+                        {
+                                ID:           scheduleID,
+                                Participants: []string{"alice"},
+                                Start:        mustParseTime(t, "2024-03-01T08:00:00+09:00"),
+                                End:          mustParseTime(t, "2024-03-01T09:00:00+09:00"),
+                        },
+                }
+
+                candidate := Schedule{
+                        ID:           scheduleID,
+                        Participants: []string{"alice"},
+                        Start:        mustParseTime(t, "2024-03-01T08:30:00+09:00"),
+                        End:          mustParseTime(t, "2024-03-01T09:30:00+09:00"),
+                }
+
+                if conflicts := DetectConflicts(existing, candidate); len(conflicts) != 0 {
+                        t.Fatalf("expected no conflicts for identical schedule IDs, got %#v", conflicts)
+                }
+        })
 }
 
 func mustParseTime(t *testing.T, value string) time.Time {
