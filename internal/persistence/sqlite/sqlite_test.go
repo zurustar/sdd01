@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -11,7 +12,9 @@ import (
 func newTestStorage(t *testing.T) *Storage {
 	t.Helper()
 
-	storage, err := Open("file:testdb?mode=memory&cache=shared")
+	dir := t.TempDir()
+	dsn := filepath.Join(dir, "scheduler.db")
+	storage, err := Open(dsn)
 	if err != nil {
 		t.Fatalf("failed to open storage: %v", err)
 	}
