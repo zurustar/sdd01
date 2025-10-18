@@ -55,7 +55,8 @@ make tests possible from the outset.
 
 ### Conflict Detection
 * Function `DetectConflicts(existing []Schedule, candidate Schedule) []Conflict`.
-* Unit tests for overlapping intervals by participant and room.
+* Unit tests for overlapping intervals by participant and room (skeleton currently describes participant, room, and non-overlap scenarios).
+* Implementation pending; the `internal/scheduler` package hosts the test scaffolding that will be completed during the Green phase.
 
 ## Test Data and Fixtures
 * Use `internal/testfixtures` package for reusable builders (e.g., `NewUser()`,
