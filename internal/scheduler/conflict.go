@@ -33,14 +33,14 @@ type Conflict struct {
 func DetectConflicts(existing []Schedule, candidate Schedule) []Conflict {
 	conflicts := make([]Conflict, 0)
 
-       for _, sched := range existing {
-               if candidate.ID != "" && sched.ID == candidate.ID {
-                       continue
-               }
+	for _, sched := range existing {
+		if candidate.ID != "" && sched.ID == candidate.ID {
+			continue
+		}
 
-               if !overlaps(sched, candidate) {
-                       continue
-               }
+		if !overlaps(sched, candidate) {
+			continue
+		}
 
 		participantConflicts := detectParticipantConflicts(sched, candidate)
 		conflicts = append(conflicts, participantConflicts...)
