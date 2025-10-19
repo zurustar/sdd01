@@ -55,3 +55,65 @@ type UpdateScheduleParams struct {
 	ScheduleID string
 	Input      ScheduleInput
 }
+
+// RoomInput captures caller provided room fields.
+type RoomInput struct {
+	Name       string
+	Location   string
+	Capacity   int
+	Facilities *string
+}
+
+// Room represents a catalog entry for a physical meeting room.
+type Room struct {
+	ID         string
+	Name       string
+	Location   string
+	Capacity   int
+	Facilities *string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
+// CreateRoomParams wraps the data required to create a room.
+type CreateRoomParams struct {
+	Principal Principal
+	Input     RoomInput
+}
+
+// UpdateRoomParams wraps the data required to update a room.
+type UpdateRoomParams struct {
+	Principal Principal
+	RoomID    string
+	Input     RoomInput
+}
+
+// UserInput captures caller provided user attributes.
+type UserInput struct {
+	Email       string
+	DisplayName string
+	IsAdmin     bool
+}
+
+// User represents an employee account exposed by the application services.
+type User struct {
+	ID          string
+	Email       string
+	DisplayName string
+	IsAdmin     bool
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+// CreateUserParams wraps the data required to create a user.
+type CreateUserParams struct {
+	Principal Principal
+	Input     UserInput
+}
+
+// UpdateUserParams wraps the data required to update a user.
+type UpdateUserParams struct {
+	Principal Principal
+	UserID    string
+	Input     UserInput
+}
