@@ -613,9 +613,12 @@ func filterMatchesSchedule(schedule persistence.Schedule, participants []string,
 	if len(filter.ParticipantIDs) == 0 {
 		return true
 	}
-	set := make(map[string]struct{}, len(participants))
+	set := make(map[string]struct{}, len(participants)+1)
 	for _, participant := range participants {
 		set[participant] = struct{}{}
+	}
+	if schedule.CreatorID != "" {
+		set[schedule.CreatorID] = struct{}{}
 	}
 	for _, participant := range filter.ParticipantIDs {
 		if _, ok := set[participant]; ok {

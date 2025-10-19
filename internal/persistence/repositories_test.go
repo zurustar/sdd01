@@ -381,6 +381,125 @@ func TestScheduleRepository(t *testing.T) {
 		}
 	})
 
+	t.Run("includes schedules created by the filtered participant even when they are not listed as attendees", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := context.Background()
+		harness := newSQLiteHarness(t)
+		defer harness.Cleanup()
+
+		now := time.Now().UTC().Truncate(time.Second)
+		creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", CreatedAt: now, UpdatedAt: now}
+		colleague := persistence.User{ID: "colleague", Email: "colleague@example.com", DisplayName: "Colleague", CreatedAt: now, UpdatedAt: now}
+		stranger := persistence.User{ID: "stranger", Email: "stranger@example.com", DisplayName: "Stranger", CreatedAt: now, UpdatedAt: now}
+		for _, u := range []persistence.User{creator, colleague, stranger} {
+			if err := harness.Users.CreateUser(ctx, u); err != nil {
+				t.Fatalf("failed to seed user %s: %v", u.ID, err)
+			}
+		}
+
+		schedules := []persistence.Schedule{
+			{
+				ID:           "sched-owned",
+				Title:        "Owned",
+				CreatorID:    creator.ID,
+				Start:        now.Add(2 * time.Hour),
+				End:          now.Add(3 * time.Hour),
+				Participants: []string{colleague.ID},
+				CreatedAt:    now,
+				UpdatedAt:    now,
+			},
+			{
+				ID:           "sched-outside",
+				Title:        "Outside window",
+				CreatorID:    creator.ID,
+				Start:        now.Add(-4 * time.Hour),
+				End:          now.Add(-3 * time.Hour),
+				Participants: []string{colleague.ID},
+				CreatedAt:    now,
+				UpdatedAt:    now,
+			},
+			{
+				ID:           "sched-other",
+				Title:        "Other owner",
+				CreatorID:    stranger.ID,
+				Start:        now.Add(2 * time.Hour),
+				End:          now.Add(3 * time.Hour),
+				Participants: []string{stranger.ID},
+				CreatedAt:    now,
+				UpdatedAt:    now,
+			},
+		}
+		for _, sched := range schedules {
+			if err := harness.Schedules.CreateSchedule(ctx, sched); err != nil {
+				t.Fatalf("CreateSchedule(%s) failed: %v", sched.ID, err)
+			}
+		}
+
+		startsAfter := now.Add(-time.Minute)
+		endsBefore := now.Add(4 * time.Hour)
+		filtered, err := harness.Schedules.ListSchedules(ctx, persistence.ScheduleFilter{
+			ParticipantIDs: []string{creator.ID},
+			StartsAfter:    &startsAfter,
+			EndsBefore:     &endsBefore,
+		})
+		if err != nil {
+			t.Fatalf("ListSchedules failed: %v", err)
+		}
+
+		if len(filtered) != 1 || filtered[0].ID != "sched-owned" {
+			t.Fatalf("expected creator-owned schedule to be returned, got %#v", filtered)
+		}
+	})
+
+	t.Run("supports multi-user views by merging participant matches and ordering chronologically", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := context.Background()
+		harness := newSQLiteHarness(t)
+		defer harness.Cleanup()
+
+		now := time.Now().UTC().Truncate(time.Second)
+		users := []persistence.User{
+			{ID: "principal", Email: "principal@example.com", DisplayName: "Principal", CreatedAt: now, UpdatedAt: now},
+			{ID: "colleague-a", Email: "a@example.com", DisplayName: "A", CreatedAt: now, UpdatedAt: now},
+			{ID: "colleague-b", Email: "b@example.com", DisplayName: "B", CreatedAt: now, UpdatedAt: now},
+			{ID: "other", Email: "other@example.com", DisplayName: "Other", CreatedAt: now, UpdatedAt: now},
+		}
+		for _, u := range users {
+			if err := harness.Users.CreateUser(ctx, u); err != nil {
+				t.Fatalf("failed to seed user %s: %v", u.ID, err)
+			}
+		}
+
+		schedules := []persistence.Schedule{
+			{ID: "sched-a", Title: "Principal", CreatorID: users[0].ID, Start: now.Add(time.Hour), End: now.Add(2 * time.Hour), Participants: []string{users[0].ID}, CreatedAt: now, UpdatedAt: now},
+			{ID: "sched-b", Title: "Colleague A", CreatorID: users[1].ID, Start: now.Add(30 * time.Minute), End: now.Add(90 * time.Minute), Participants: []string{users[1].ID}, CreatedAt: now, UpdatedAt: now},
+			{ID: "sched-c", Title: "Colleague B", CreatorID: users[2].ID, Start: now.Add(3 * time.Hour), End: now.Add(4 * time.Hour), Participants: []string{users[2].ID}, CreatedAt: now, UpdatedAt: now},
+			{ID: "sched-d", Title: "Other", CreatorID: users[3].ID, Start: now.Add(time.Hour), End: now.Add(2 * time.Hour), Participants: []string{users[3].ID}, CreatedAt: now, UpdatedAt: now},
+		}
+		for _, sched := range schedules {
+			if err := harness.Schedules.CreateSchedule(ctx, sched); err != nil {
+				t.Fatalf("CreateSchedule(%s) failed: %v", sched.ID, err)
+			}
+		}
+
+		filterParticipants := []string{users[0].ID, users[1].ID, users[2].ID}
+		filtered, err := harness.Schedules.ListSchedules(ctx, persistence.ScheduleFilter{ParticipantIDs: filterParticipants})
+		if err != nil {
+			t.Fatalf("ListSchedules failed: %v", err)
+		}
+
+		ids := []string{}
+		for _, sched := range filtered {
+			ids = append(ids, sched.ID)
+		}
+		expected := []string{"sched-b", "sched-a", "sched-c"}
+		if !slices.Equal(ids, expected) {
+			t.Fatalf("expected schedules %v, got %v", expected, ids)
+		}
+	})
+
 	t.Run("orders returned schedules deterministically", func(t *testing.T) {
 		t.Parallel()
 
