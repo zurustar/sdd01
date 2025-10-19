@@ -7,6 +7,14 @@ var (
 	ErrUnauthorized = errors.New("application: unauthorized")
 	// ErrNotFound is returned when the requested resource does not exist.
 	ErrNotFound = errors.New("application: not found")
+	// ErrInvalidCredentials indicates authentication failed due to incorrect credentials.
+	ErrInvalidCredentials = errors.New("application: invalid credentials")
+	// ErrAccountDisabled indicates the user account has been disabled.
+	ErrAccountDisabled = errors.New("application: account disabled")
+	// ErrSessionExpired indicates the session is no longer valid due to expiry.
+	ErrSessionExpired = errors.New("application: session expired")
+	// ErrSessionRevoked indicates the session has been explicitly revoked.
+	ErrSessionRevoked = errors.New("application: session revoked")
 )
 
 // ValidationError captures field level validation issues that callers can surface to users.

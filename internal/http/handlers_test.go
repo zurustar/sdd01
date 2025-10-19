@@ -126,7 +126,7 @@ func TestScheduleHandlers(t *testing.T) {
 			},
 		}
 
-		handler := NewScheduleHandler(service)
+		handler := NewScheduleHandler(service, nil)
 
 		payload := map[string]any{
 			"title":              "Design sync",
@@ -205,7 +205,7 @@ func TestScheduleHandlers(t *testing.T) {
 			},
 		}
 
-		handler := NewScheduleHandler(service)
+		handler := NewScheduleHandler(service, nil)
 
 		payload := map[string]any{
 			"title":              "Weekly sync",
@@ -377,6 +377,8 @@ func TestRoomHandlers(t *testing.T) {
 type fakeScheduleService struct {
 	createScheduleFunc func(context.Context, application.CreateScheduleParams) (application.Schedule, []application.ConflictWarning, error)
 	updateScheduleFunc func(context.Context, application.UpdateScheduleParams) (application.Schedule, []application.ConflictWarning, error)
+	deleteScheduleFunc func(context.Context, application.Principal, string) error
+	listSchedulesFunc  func(context.Context, application.ListSchedulesParams) ([]application.Schedule, []application.ConflictWarning, error)
 }
 
 func (f *fakeScheduleService) CreateSchedule(ctx context.Context, params application.CreateScheduleParams) (application.Schedule, []application.ConflictWarning, error) {
@@ -391,6 +393,20 @@ func (f *fakeScheduleService) UpdateSchedule(ctx context.Context, params applica
 		return f.updateScheduleFunc(ctx, params)
 	}
 	return application.Schedule{}, nil, nil
+}
+
+func (f *fakeScheduleService) DeleteSchedule(ctx context.Context, principal application.Principal, scheduleID string) error {
+	if f.deleteScheduleFunc != nil {
+		return f.deleteScheduleFunc(ctx, principal, scheduleID)
+	}
+	return nil
+}
+
+func (f *fakeScheduleService) ListSchedules(ctx context.Context, params application.ListSchedulesParams) ([]application.Schedule, []application.ConflictWarning, error) {
+	if f.listSchedulesFunc != nil {
+		return f.listSchedulesFunc(ctx, params)
+	}
+	return nil, nil, nil
 }
 
 func mustParse(t *testing.T, value string) time.Time {

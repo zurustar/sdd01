@@ -3,31 +3,31 @@ package http
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/example/enterprise-scheduler/internal/application"
 )
 
-// scheduleService defines the subset of application schedule operations required by the HTTP layer.
 type scheduleService interface {
 	CreateSchedule(ctx context.Context, params application.CreateScheduleParams) (application.Schedule, []application.ConflictWarning, error)
 	UpdateSchedule(ctx context.Context, params application.UpdateScheduleParams) (application.Schedule, []application.ConflictWarning, error)
+	DeleteSchedule(ctx context.Context, principal application.Principal, scheduleID string) error
+	ListSchedules(ctx context.Context, params application.ListSchedulesParams) ([]application.Schedule, []application.ConflictWarning, error)
 }
 
-// ScheduleHandler exposes HTTP endpoints backed by the schedule service.
 type ScheduleHandler struct {
-	service scheduleService
+	service   scheduleService
+	responder responder
 }
 
-// NewScheduleHandler wires dependencies for schedule endpoints.
-func NewScheduleHandler(service scheduleService) *ScheduleHandler {
-	return &ScheduleHandler{service: service}
+func NewScheduleHandler(service scheduleService, logger *slog.Logger) *ScheduleHandler {
+	return &ScheduleHandler{service: service, responder: newResponder(logger)}
 }
 
-// Create handles POST /schedules style requests.
 func (h *ScheduleHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if h == nil || h.service == nil {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -36,7 +36,7 @@ func (h *ScheduleHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	var req scheduleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		h.responder.writeError(r.Context(), w, http.StatusBadRequest, errBadRequestBody)
 		return
 	}
 
@@ -47,14 +47,13 @@ func (h *ScheduleHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Input:     req.toInput(),
 	})
 	if err != nil {
-		h.renderError(w, err)
+		h.responder.handleServiceError(r.Context(), w, err)
 		return
 	}
 
-	h.renderSchedule(w, schedule, warnings, http.StatusCreated)
+	h.renderSchedule(r.Context(), w, schedule, warnings, http.StatusCreated)
 }
 
-// Update handles PUT /schedules/{id} style requests.
 func (h *ScheduleHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if h == nil || h.service == nil {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -63,13 +62,13 @@ func (h *ScheduleHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	scheduleID, ok := ScheduleIDFromContext(r.Context())
 	if !ok || strings.TrimSpace(scheduleID) == "" {
-		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		h.responder.writeError(r.Context(), w, http.StatusBadRequest, errInvalidScheduleID)
 		return
 	}
 
 	var req scheduleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		h.responder.writeError(r.Context(), w, http.StatusBadRequest, errBadRequestBody)
 		return
 	}
 
@@ -81,40 +80,63 @@ func (h *ScheduleHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Input:      req.toInput(),
 	})
 	if err != nil {
-		h.renderError(w, err)
+		h.responder.handleServiceError(r.Context(), w, err)
 		return
 	}
 
-	h.renderSchedule(w, schedule, warnings, http.StatusOK)
+	h.renderSchedule(r.Context(), w, schedule, warnings, http.StatusOK)
 }
 
-func (h *ScheduleHandler) renderError(w http.ResponseWriter, err error) {
-	status := http.StatusInternalServerError
-	switch {
-	case errors.Is(err, application.ErrUnauthorized):
-		status = http.StatusForbidden
-	case errors.Is(err, application.ErrNotFound):
-		status = http.StatusNotFound
-	default:
-		var vErr *application.ValidationError
-		if errors.As(err, &vErr) {
-			status = http.StatusUnprocessableEntity
-		}
+func (h *ScheduleHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	if h == nil || h.service == nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
 	}
 
-	http.Error(w, http.StatusText(status), status)
+	scheduleID, ok := ScheduleIDFromContext(r.Context())
+	if !ok || strings.TrimSpace(scheduleID) == "" {
+		h.responder.writeError(r.Context(), w, http.StatusBadRequest, errInvalidScheduleID)
+		return
+	}
+
+	principal, _ := PrincipalFromContext(r.Context())
+	if err := h.service.DeleteSchedule(r.Context(), principal, scheduleID); err != nil {
+		h.responder.handleServiceError(r.Context(), w, err)
+		return
+	}
+
+	h.responder.writeJSON(r.Context(), w, http.StatusNoContent, nil)
 }
 
-func (h *ScheduleHandler) renderSchedule(w http.ResponseWriter, schedule application.Schedule, warnings []application.ConflictWarning, status int) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
+func (h *ScheduleHandler) List(w http.ResponseWriter, r *http.Request) {
+	if h == nil || h.service == nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
 
+	principal, _ := PrincipalFromContext(r.Context())
+	params := buildListParams(r.URL.Query(), principal)
+
+	schedules, warnings, err := h.service.ListSchedules(r.Context(), params)
+	if err != nil {
+		h.responder.handleServiceError(r.Context(), w, err)
+		return
+	}
+
+	response := listSchedulesResponse{
+		Schedules: toScheduleDTOs(schedules),
+		Warnings:  toWarningDTOs(warnings),
+	}
+
+	h.responder.writeJSON(r.Context(), w, http.StatusOK, response)
+}
+
+func (h *ScheduleHandler) renderSchedule(ctx context.Context, w http.ResponseWriter, schedule application.Schedule, warnings []application.ConflictWarning, status int) {
 	payload := scheduleResponse{
 		Schedule: toScheduleDTO(schedule),
 		Warnings: toWarningDTOs(warnings),
 	}
-
-	_ = json.NewEncoder(w).Encode(payload)
+	h.responder.writeJSON(ctx, w, status, payload)
 }
 
 type scheduleRequest struct {
@@ -130,19 +152,20 @@ type scheduleRequest struct {
 
 func (r scheduleRequest) toInput() application.ScheduleInput {
 	return application.ScheduleInput{
-		CreatorID:        r.CreatorID,
-		Title:            r.Title,
+		CreatorID:        strings.TrimSpace(r.CreatorID),
+		Title:            strings.TrimSpace(r.Title),
 		Description:      r.Description,
 		Start:            parseTime(r.Start),
 		End:              parseTime(r.End),
 		RoomID:           r.RoomID,
-		WebConferenceURL: r.WebConferenceURL,
-		ParticipantIDs:   r.ParticipantIDs,
+		WebConferenceURL: strings.TrimSpace(r.WebConferenceURL),
+		ParticipantIDs:   append([]string(nil), r.ParticipantIDs...),
 	}
 }
 
 func parseTime(value string) time.Time {
-	if strings.TrimSpace(value) == "" {
+	value = strings.TrimSpace(value)
+	if value == "" {
 		return time.Time{}
 	}
 	if ts, err := time.Parse(time.RFC3339Nano, value); err == nil {
@@ -157,6 +180,11 @@ func parseTime(value string) time.Time {
 type scheduleResponse struct {
 	Schedule scheduleDTO          `json:"schedule"`
 	Warnings []conflictWarningDTO `json:"warnings,omitempty"`
+}
+
+type listSchedulesResponse struct {
+	Schedules []scheduleDTO        `json:"schedules"`
+	Warnings  []conflictWarningDTO `json:"warnings,omitempty"`
 }
 
 type scheduleDTO struct {
@@ -189,6 +217,17 @@ func toScheduleDTO(schedule application.Schedule) scheduleDTO {
 	}
 }
 
+func toScheduleDTOs(schedules []application.Schedule) []scheduleDTO {
+	if len(schedules) == 0 {
+		return nil
+	}
+	out := make([]scheduleDTO, 0, len(schedules))
+	for _, schedule := range schedules {
+		out = append(out, toScheduleDTO(schedule))
+	}
+	return out
+}
+
 type conflictWarningDTO struct {
 	ScheduleID    string  `json:"schedule_id"`
 	Type          string  `json:"type"`
@@ -212,4 +251,65 @@ func toWarningDTOs(warnings []application.ConflictWarning) []conflictWarningDTO 
 		out = append(out, dto)
 	}
 	return out
+}
+
+func buildListParams(values url.Values, principal application.Principal) application.ListSchedulesParams {
+	params := application.ListSchedulesParams{Principal: principal}
+
+	if participants := strings.TrimSpace(values.Get("participants")); participants != "" {
+		params.ParticipantIDs = parseCSV(participants)
+	}
+
+	if after := strings.TrimSpace(values.Get("starts_after")); after != "" {
+		if ts, err := time.Parse(time.RFC3339Nano, after); err == nil {
+			params.StartsAfter = &ts
+		} else if ts, err := time.Parse(time.RFC3339, after); err == nil {
+			params.StartsAfter = &ts
+		}
+	}
+
+	if before := strings.TrimSpace(values.Get("ends_before")); before != "" {
+		if ts, err := time.Parse(time.RFC3339Nano, before); err == nil {
+			params.EndsBefore = &ts
+		} else if ts, err := time.Parse(time.RFC3339, before); err == nil {
+			params.EndsBefore = &ts
+		}
+	}
+
+	if day := strings.TrimSpace(values.Get("day")); day != "" {
+		if ts, err := time.Parse("2006-01-02", day); err == nil {
+			params.Period = application.ListPeriodDay
+			params.PeriodReference = ts
+		}
+	} else if week := strings.TrimSpace(values.Get("week")); week != "" {
+		if ts, err := time.Parse("2006-01-02", week); err == nil {
+			params.Period = application.ListPeriodWeek
+			params.PeriodReference = ts
+		}
+	} else if month := strings.TrimSpace(values.Get("month")); month != "" {
+		if ts, err := time.Parse("2006-01", month); err == nil {
+			params.Period = application.ListPeriodMonth
+			params.PeriodReference = ts
+		}
+	}
+
+	if len(params.ParticipantIDs) == 0 {
+		params.ParticipantIDs = nil
+	}
+
+	return params
+}
+
+func parseCSV(value string) []string {
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
