@@ -136,9 +136,25 @@ func TestDetectConflicts(t *testing.T) {
 			End:          mustParseTime(t, "2024-03-02T10:30:00+09:00"),
 		}
 
-		_ = existing
-		_ = candidate
-		t.Skip("TODO: ensure DetectConflicts emits both participant and room warnings in a single evaluation")
+		conflicts := DetectConflicts(existing, candidate)
+
+		expectedRoomID := roomID
+		expect := []Conflict{
+			{
+				WithScheduleID: "existing-hybrid",
+				Type:           ConflictTypeParticipant,
+				Participant:    "bob",
+			},
+			{
+				WithScheduleID: "existing-hybrid",
+				Type:           ConflictTypeRoom,
+				RoomID:         &expectedRoomID,
+			},
+		}
+
+		if !reflect.DeepEqual(conflicts, expect) {
+			t.Fatalf("expected combined conflicts %#v, got %#v", expect, conflicts)
+		}
 	})
 }
 
