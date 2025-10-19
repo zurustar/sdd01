@@ -245,6 +245,18 @@ func TestScheduleRepository(t *testing.T) {
 	}
 }
 
+func TestStorage_normalizesDSNAndEnforcesForeignKeys(t *testing.T) {
+	t.Skip("TODO: assert Open normalizes DSN, enables PRAGMA foreign_keys, and rolls back on transaction failure")
+}
+
+func TestStorage_timestampsRoundTripRFC3339Nano(t *testing.T) {
+	t.Skip("TODO: ensure timestamp columns round-trip using time.RFC3339Nano in UTC")
+}
+
+func TestStorage_weekdayBitmaskRoundTrip(t *testing.T) {
+	t.Skip("TODO: ensure weekday bitmask encoding faithfully converts to []time.Weekday")
+}
+
 func TestRecurrenceRepository(t *testing.T) {
 	ctx := context.Background()
 	storage := newTestStorage(t)
