@@ -34,6 +34,33 @@ func newTestStorage(t *testing.T) *Storage {
 	return storage
 }
 
+func TestSplitSQLStatements(t *testing.T) {
+	script := `-- enable foreign keys
+PRAGMA foreign_keys = ON;
+
+/* create users table */
+CREATE TABLE users(id TEXT PRIMARY KEY);
+
+INSERT INTO logs(message) VALUES('semicolon; inside string');
+`
+
+	statements := splitSQLStatements(script)
+	expected := []string{
+		"PRAGMA foreign_keys = ON",
+		"CREATE TABLE users(id TEXT PRIMARY KEY)",
+		"INSERT INTO logs(message) VALUES('semicolon; inside string')",
+	}
+
+	if len(statements) != len(expected) {
+		t.Fatalf("expected %d statements, got %d: %#v", len(expected), len(statements), statements)
+	}
+	for i, stmt := range expected {
+		if statements[i] != stmt {
+			t.Fatalf("statement %d mismatch: got %q want %q", i, statements[i], stmt)
+		}
+	}
+}
+
 func TestUserRepository(t *testing.T) {
 	ctx := context.Background()
 	storage := newTestStorage(t)
