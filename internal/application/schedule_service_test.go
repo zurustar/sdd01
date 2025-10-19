@@ -13,6 +13,8 @@ type scheduleRepoStub struct {
 	updated   Schedule
 	err       error
 	deleteErr error
+	list      []Schedule
+	listErr   error
 }
 
 func (s *scheduleRepoStub) CreateSchedule(ctx context.Context, schedule Schedule) (Schedule, error) {
@@ -43,6 +45,21 @@ func (s *scheduleRepoStub) UpdateSchedule(ctx context.Context, schedule Schedule
 
 func (s *scheduleRepoStub) DeleteSchedule(ctx context.Context, id string) error {
 	return s.deleteErr
+}
+
+func (s *scheduleRepoStub) ListSchedules(ctx context.Context) ([]Schedule, error) {
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
+	if s.err != nil {
+		return nil, s.err
+	}
+	if len(s.list) == 0 {
+		return nil, nil
+	}
+	out := make([]Schedule, len(s.list))
+	copy(out, s.list)
+	return out, nil
 }
 
 type userDirectoryStub struct {
@@ -84,7 +101,7 @@ func TestScheduleService_CreateSchedule_ValidatesTemporalBounds(t *testing.T) {
 	repo := &scheduleRepoStub{}
 	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, func() string { return "schedule-1" }, func() time.Time { return mustJST(t, 9) })
 
-	_, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
+	_, _, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
 		Principal: Principal{UserID: "user-1"},
 		Input: ScheduleInput{
 			CreatorID:      "user-1",
@@ -110,7 +127,7 @@ func TestScheduleService_CreateSchedule_ValidatesRequiredFields(t *testing.T) {
 
 	svc := NewScheduleService(&scheduleRepoStub{}, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, func() time.Time { return mustJST(t, 9) })
 
-	_, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
+	_, _, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
 		Principal: Principal{UserID: "user-1"},
 		Input: ScheduleInput{
 			CreatorID: "user-1",
@@ -138,7 +155,7 @@ func TestScheduleService_CreateSchedule_ValidatesWebConferenceURL(t *testing.T) 
 
 	svc := NewScheduleService(&scheduleRepoStub{}, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, func() time.Time { return mustJST(t, 9) })
 
-	_, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
+	_, _, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
 		Principal: Principal{UserID: "user-1"},
 		Input: ScheduleInput{
 			CreatorID:        "user-1",
@@ -165,7 +182,7 @@ func TestScheduleService_CreateSchedule_PreventsCreatorSpoofingForRegularUsers(t
 
 	svc := NewScheduleService(&scheduleRepoStub{}, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, nil)
 
-	_, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
+	_, _, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
 		Principal: Principal{UserID: "user-1", IsAdmin: false},
 		Input: ScheduleInput{
 			CreatorID:      "user-2",
@@ -187,7 +204,7 @@ func TestScheduleService_CreateSchedule_AllowsAdministratorOverrides(t *testing.
 	repo := &scheduleRepoStub{}
 	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, func() string { return "schedule-1" }, func() time.Time { return mustJST(t, 9) })
 
-	_, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
+	_, _, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
 		Principal: Principal{UserID: "admin", IsAdmin: true},
 		Input: ScheduleInput{
 			CreatorID:      "user-2",
@@ -212,7 +229,7 @@ func TestScheduleService_CreateSchedule_VerifiesParticipantsExist(t *testing.T) 
 
 	svc := NewScheduleService(&scheduleRepoStub{}, &userDirectoryStub{missing: []string{"user-2"}}, &roomCatalogStub{exists: true}, nil, func() time.Time { return mustJST(t, 9) })
 
-	_, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
+	_, _, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
 		Principal: Principal{UserID: "admin", IsAdmin: true},
 		Input: ScheduleInput{
 			CreatorID:      "user-2",
@@ -239,7 +256,7 @@ func TestScheduleService_CreateSchedule_VerifiesRoomExistence(t *testing.T) {
 	roomID := "room-1"
 	svc := NewScheduleService(&scheduleRepoStub{}, &userDirectoryStub{}, &roomCatalogStub{exists: false}, nil, func() time.Time { return mustJST(t, 9) })
 
-	_, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
+	_, _, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
 		Principal: Principal{UserID: "user-1"},
 		Input: ScheduleInput{
 			CreatorID:      "user-1",
@@ -268,7 +285,7 @@ func TestScheduleService_CreateSchedule_AllowsHybridMeetings(t *testing.T) {
 	repo := &scheduleRepoStub{schedule: Schedule{ID: "schedule-1", CreatorID: "user-1"}}
 	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, func() string { return "schedule-1" }, func() time.Time { return mustJST(t, 9) })
 
-	_, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
+	_, _, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
 		Principal: Principal{UserID: "user-1"},
 		Input: ScheduleInput{
 			CreatorID:        "user-1",
@@ -294,6 +311,77 @@ func TestScheduleService_CreateSchedule_AllowsHybridMeetings(t *testing.T) {
 	}
 }
 
+func TestScheduleService_CreateSchedule_ReturnsConflictWarnings(t *testing.T) {
+	t.Parallel()
+
+	roomID := "room-1"
+	repo := &scheduleRepoStub{
+		list: []Schedule{{
+			ID:             "schedule-existing",
+			CreatorID:      "user-1",
+			Title:          "Existing",
+			Start:          mustJST(t, 9),
+			End:            mustJST(t, 10),
+			RoomID:         &roomID,
+			ParticipantIDs: []string{"user-1", "user-2"},
+		}},
+	}
+
+	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, func() string { return "schedule-new" }, func() time.Time { return mustJST(t, 8) })
+
+	created, warnings, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
+		Principal: Principal{UserID: "user-1"},
+		Input: ScheduleInput{
+			CreatorID:      "user-1",
+			Title:          "Design sync",
+			Start:          mustJST(t, 9),
+			End:            mustJST(t, 10),
+			RoomID:         &roomID,
+			ParticipantIDs: []string{"user-1"},
+		},
+	})
+
+	if err != nil {
+		t.Fatalf("expected success with warnings, got %v", err)
+	}
+
+	if len(warnings) != 2 {
+		t.Fatalf("expected two conflict warnings, got %v", warnings)
+	}
+
+	warningTypes := map[string]ConflictWarning{}
+	for _, warning := range warnings {
+		warningTypes[warning.Type] = warning
+	}
+
+	participantWarning, ok := warningTypes["participant"]
+	if !ok {
+		t.Fatalf("expected participant conflict warning, got %v", warnings)
+	}
+	if participantWarning.ParticipantID != "user-1" {
+		t.Fatalf("expected participant conflict for user-1, got %v", participantWarning.ParticipantID)
+	}
+	if participantWarning.ScheduleID != "schedule-existing" {
+		t.Fatalf("expected conflict with schedule-existing, got %s", participantWarning.ScheduleID)
+	}
+
+	roomWarning, ok := warningTypes["room"]
+	if !ok {
+		t.Fatalf("expected room conflict warning, got %v", warnings)
+	}
+	if roomWarning.RoomID == nil || *roomWarning.RoomID != roomID {
+		t.Fatalf("expected room conflict for room-1, got %v", roomWarning.RoomID)
+	}
+
+	if repo.created.ID == "" {
+		t.Fatalf("expected schedule to be persisted despite warnings")
+	}
+
+	if created.ID == "" {
+		t.Fatalf("expected created schedule to include identifier")
+	}
+}
+
 func TestScheduleService_UpdateSchedule_ValidatesCreatorImmutability(t *testing.T) {
 	t.Parallel()
 
@@ -309,7 +397,7 @@ func TestScheduleService_UpdateSchedule_ValidatesCreatorImmutability(t *testing.
 	}}
 	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, func() time.Time { return mustJST(t, 9) })
 
-	_, err := svc.UpdateSchedule(context.Background(), UpdateScheduleParams{
+	_, _, err := svc.UpdateSchedule(context.Background(), UpdateScheduleParams{
 		Principal:  Principal{UserID: "user-1"},
 		ScheduleID: "schedule-1",
 		Input: ScheduleInput{
@@ -344,7 +432,7 @@ func TestScheduleService_UpdateSchedule_BlocksUnauthorizedUsers(t *testing.T) {
 	}}
 	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, func() time.Time { return mustJST(t, 9) })
 
-	_, err := svc.UpdateSchedule(context.Background(), UpdateScheduleParams{
+	_, _, err := svc.UpdateSchedule(context.Background(), UpdateScheduleParams{
 		Principal:  Principal{UserID: "user-2"},
 		ScheduleID: "schedule-1",
 		Input: ScheduleInput{
@@ -374,7 +462,7 @@ func TestScheduleService_UpdateSchedule_AllowsAdministratorOverride(t *testing.T
 	}}
 	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, func() time.Time { return mustJST(t, 9) })
 
-	_, err := svc.UpdateSchedule(context.Background(), UpdateScheduleParams{
+	_, _, err := svc.UpdateSchedule(context.Background(), UpdateScheduleParams{
 		Principal:  Principal{UserID: "admin", IsAdmin: true},
 		ScheduleID: "schedule-1",
 		Input: ScheduleInput{
@@ -408,7 +496,7 @@ func TestScheduleService_UpdateSchedule_ValidatesTemporalBounds(t *testing.T) {
 	}}
 	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, func() time.Time { return mustJST(t, 9) })
 
-	_, err := svc.UpdateSchedule(context.Background(), UpdateScheduleParams{
+	_, _, err := svc.UpdateSchedule(context.Background(), UpdateScheduleParams{
 		Principal:  Principal{UserID: "user-1"},
 		ScheduleID: "schedule-1",
 		Input: ScheduleInput{
@@ -459,7 +547,7 @@ func TestScheduleService_UpdateSchedule_ReturnsNotFoundWhenMissing(t *testing.T)
 	repo := &scheduleRepoStub{}
 	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, func() time.Time { return mustJST(t, 9) })
 
-	_, err := svc.UpdateSchedule(context.Background(), UpdateScheduleParams{
+	_, _, err := svc.UpdateSchedule(context.Background(), UpdateScheduleParams{
 		Principal:  Principal{UserID: "user-1"},
 		ScheduleID: "missing", // repository will surface ErrNotFound for unknown ID
 		Input: ScheduleInput{
@@ -571,8 +659,77 @@ func TestScheduleService_DeleteSchedule_CleansUpRecurrences(t *testing.T) {
 func TestScheduleService_UpdateSchedule_PersistsDespiteWarnings(t *testing.T) {
 	t.Parallel()
 
-	t.Run("records updates even when detector emits warnings", func(t *testing.T) {
-		t.Parallel()
-		t.Skip("TODO: ensure UpdateSchedule returns warnings but still saves changes")
+	roomID := "room-2"
+	repo := &scheduleRepoStub{
+		schedule: Schedule{
+			ID:             "schedule-1",
+			CreatorID:      "user-1",
+			Title:          "Design sync",
+			Start:          mustJST(t, 9),
+			End:            mustJST(t, 10),
+			ParticipantIDs: []string{"user-1"},
+		},
+		list: []Schedule{
+			{
+				ID:             "schedule-1",
+				CreatorID:      "user-1",
+				Title:          "Design sync",
+				Start:          mustJST(t, 9),
+				End:            mustJST(t, 10),
+				ParticipantIDs: []string{"user-1"},
+			},
+			{
+				ID:             "schedule-2",
+				CreatorID:      "user-2",
+				Title:          "Team sync",
+				Start:          mustJST(t, 9),
+				End:            mustJST(t, 10),
+				ParticipantIDs: []string{"user-1"},
+				RoomID:         &roomID,
+			},
+		},
+	}
+
+	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, func() time.Time { return mustJST(t, 8) })
+
+	updated, warnings, err := svc.UpdateSchedule(context.Background(), UpdateScheduleParams{
+		Principal:  Principal{UserID: "user-1"},
+		ScheduleID: "schedule-1",
+		Input: ScheduleInput{
+			CreatorID:      "user-1",
+			Title:          "Updated title",
+			Start:          mustJST(t, 9),
+			End:            mustJST(t, 10),
+			RoomID:         &roomID,
+			ParticipantIDs: []string{"user-1"},
+		},
 	})
+
+	if err != nil {
+		t.Fatalf("expected update to succeed with warnings, got %v", err)
+	}
+
+	if len(warnings) == 0 {
+		t.Fatalf("expected warnings to be returned, got none")
+	}
+
+	foundParticipantWarning := false
+	for _, warning := range warnings {
+		if warning.Type == "participant" && warning.ScheduleID == "schedule-2" {
+			foundParticipantWarning = true
+			break
+		}
+	}
+
+	if !foundParticipantWarning {
+		t.Fatalf("expected participant warning referencing schedule-2, got %v", warnings)
+	}
+
+	if repo.updated.Title != "Updated title" {
+		t.Fatalf("expected repository to receive updated schedule, got %s", repo.updated.Title)
+	}
+
+	if updated.Title != "Updated title" {
+		t.Fatalf("expected updated schedule to be returned, got %s", updated.Title)
+	}
 }

@@ -35,6 +35,14 @@ type Schedule struct {
 	UpdatedAt        time.Time
 }
 
+// ConflictWarning describes a scheduling conflict that should be surfaced to callers.
+type ConflictWarning struct {
+	ScheduleID    string
+	Type          string
+	ParticipantID string
+	RoomID        *string
+}
+
 // CreateScheduleParams wraps the data required to create a schedule.
 type CreateScheduleParams struct {
 	Principal Principal
