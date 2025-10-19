@@ -49,3 +49,15 @@ type RecurrenceRule struct {
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 }
+
+// Session represents an authentication session persisted for a user.
+type Session struct {
+	ID          string
+	UserID      string
+	Token       string
+	Fingerprint string
+	ExpiresAt   time.Time
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	RevokedAt   *time.Time
+}
