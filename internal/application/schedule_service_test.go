@@ -67,6 +67,79 @@ func (s *scheduleRepoStub) ListSchedules(ctx context.Context, filter ScheduleRep
 	return out, nil
 }
 
+type filteringScheduleRepo struct {
+	schedules []Schedule
+}
+
+func (f *filteringScheduleRepo) CreateSchedule(ctx context.Context, schedule Schedule) (Schedule, error) {
+	f.schedules = append(f.schedules, schedule)
+	return schedule, nil
+}
+
+func (f *filteringScheduleRepo) GetSchedule(ctx context.Context, id string) (Schedule, error) {
+	for _, sched := range f.schedules {
+		if sched.ID == id {
+			return sched, nil
+		}
+	}
+	return Schedule{}, ErrNotFound
+}
+
+func (f *filteringScheduleRepo) UpdateSchedule(ctx context.Context, schedule Schedule) (Schedule, error) {
+	for i, existing := range f.schedules {
+		if existing.ID == schedule.ID {
+			f.schedules[i] = schedule
+			return schedule, nil
+		}
+	}
+	return Schedule{}, ErrNotFound
+}
+
+func (f *filteringScheduleRepo) DeleteSchedule(ctx context.Context, id string) error {
+	for i, existing := range f.schedules {
+		if existing.ID == id {
+			f.schedules = append(f.schedules[:i], f.schedules[i+1:]...)
+			return nil
+		}
+	}
+	return ErrNotFound
+}
+
+func (f *filteringScheduleRepo) ListSchedules(ctx context.Context, filter ScheduleRepositoryFilter) ([]Schedule, error) {
+	filtered := make([]Schedule, 0, len(f.schedules))
+	for _, sched := range f.schedules {
+		if matchesScheduleFilter(sched, filter) {
+			filtered = append(filtered, sched)
+		}
+	}
+	return filtered, nil
+}
+
+func matchesScheduleFilter(schedule Schedule, filter ScheduleRepositoryFilter) bool {
+	if filter.StartsAfter != nil && !schedule.End.After(filter.StartsAfter.UTC()) {
+		return false
+	}
+	if filter.EndsBefore != nil && !schedule.Start.Before(filter.EndsBefore.UTC()) {
+		return false
+	}
+	if len(filter.ParticipantIDs) == 0 {
+		return true
+	}
+	set := make(map[string]struct{}, len(schedule.ParticipantIDs)+1)
+	for _, participant := range schedule.ParticipantIDs {
+		set[participant] = struct{}{}
+	}
+	if schedule.CreatorID != "" {
+		set[schedule.CreatorID] = struct{}{}
+	}
+	for _, id := range filter.ParticipantIDs {
+		if _, ok := set[id]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 type userDirectoryStub struct {
 	missing []string
 	err     error
@@ -858,6 +931,91 @@ func TestScheduleService_ListSchedules_FilteringAndOrdering(t *testing.T) {
 		expected := []string{"user-1", "user-2", "user-3"}
 		if diff := compareStringSlices(repo.listFilter.ParticipantIDs, expected); diff != "" {
 			t.Fatalf("participant filter mismatch: %s", diff)
+		}
+	})
+
+	t.Run("returns only principal schedules by default even when repository stores colleagues", func(t *testing.T) {
+		t.Parallel()
+
+		repo := &filteringScheduleRepo{
+			schedules: []Schedule{
+				{
+					ID:             "schedule-principal",
+					CreatorID:      "user-1",
+					Title:          "Principal meeting",
+					Start:          mustJST(t, 9),
+					End:            mustJST(t, 10),
+					ParticipantIDs: []string{"user-1"},
+				},
+				{
+					ID:             "schedule-colleague",
+					CreatorID:      "user-2",
+					Title:          "Colleague meeting",
+					Start:          mustJST(t, 11),
+					End:            mustJST(t, 12),
+					ParticipantIDs: []string{"user-2"},
+				},
+			},
+		}
+		svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, nil, nil)
+
+		schedules, _, err := svc.ListSchedules(context.Background(), ListSchedulesParams{
+			Principal: Principal{UserID: "user-1"},
+		})
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+
+		if len(schedules) != 1 || schedules[0].ID != "schedule-principal" {
+			t.Fatalf("expected only principal schedule, got %#v", schedules)
+		}
+	})
+
+	t.Run("respects explicit participant selections while keeping the principal's schedules", func(t *testing.T) {
+		t.Parallel()
+
+		repo := &filteringScheduleRepo{
+			schedules: []Schedule{
+				{
+					ID:             "schedule-principal",
+					CreatorID:      "user-1",
+					Title:          "Principal meeting",
+					Start:          mustJST(t, 13),
+					End:            mustJST(t, 14),
+					ParticipantIDs: []string{"user-1"},
+				},
+				{
+					ID:             "schedule-colleague",
+					CreatorID:      "user-2",
+					Title:          "Colleague meeting",
+					Start:          mustJST(t, 9),
+					End:            mustJST(t, 10),
+					ParticipantIDs: []string{"user-2"},
+				},
+				{
+					ID:             "schedule-unrelated",
+					CreatorID:      "user-3",
+					Title:          "Unrelated",
+					Start:          mustJST(t, 8),
+					End:            mustJST(t, 9),
+					ParticipantIDs: []string{"user-3"},
+				},
+			},
+		}
+		svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, nil, nil)
+
+		schedules, _, err := svc.ListSchedules(context.Background(), ListSchedulesParams{
+			Principal:      Principal{UserID: "user-1"},
+			ParticipantIDs: []string{"user-2"},
+		})
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+
+		ids := scheduleIDs(schedules)
+		expected := []string{"schedule-colleague", "schedule-principal"}
+		if diff := compareStringSlices(ids, expected); diff != "" {
+			t.Fatalf("expected schedules %v, got %v (%s)", expected, ids, diff)
 		}
 	})
 
