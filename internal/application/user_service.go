@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/example/enterprise-scheduler/internal/persistence"
 )
 
 // UserRepository captures the persistence operations needed by the user service.
@@ -67,7 +69,7 @@ func (s *UserService) CreateUser(ctx context.Context, params CreateUserParams) (
 
 	persisted, err := s.users.CreateUser(ctx, user)
 	if err != nil {
-		return User{}, err
+		return User{}, mapUserRepoError(err)
 	}
 
 	return persisted, nil
@@ -87,10 +89,7 @@ func (s *UserService) UpdateUser(ctx context.Context, params UpdateUserParams) (
 
 	existing, err := s.users.GetUser(ctx, params.UserID)
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return User{}, ErrNotFound
-		}
-		return User{}, err
+		return User{}, mapUserRepoError(err)
 	}
 
 	normalized := normalizeUserInput(params.Input)
@@ -107,10 +106,7 @@ func (s *UserService) UpdateUser(ctx context.Context, params UpdateUserParams) (
 
 	persisted, err := s.users.UpdateUser(ctx, updated)
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return User{}, ErrNotFound
-		}
-		return User{}, err
+		return User{}, mapUserRepoError(err)
 	}
 
 	return persisted, nil
@@ -129,10 +125,7 @@ func (s *UserService) DeleteUser(ctx context.Context, principal Principal, userI
 	}
 
 	if err := s.users.DeleteUser(ctx, userID); err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return ErrNotFound
-		}
-		return err
+		return mapUserRepoError(err)
 	}
 
 	return nil
@@ -195,4 +188,20 @@ func validateUserInput(input UserInput) *ValidationError {
 	}
 
 	return vErr
+}
+
+func mapUserRepoError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, ErrNotFound) {
+		return ErrNotFound
+	}
+	if errors.Is(err, persistence.ErrNotFound) {
+		return ErrNotFound
+	}
+	if errors.Is(err, persistence.ErrDuplicate) {
+		return ErrAlreadyExists
+	}
+	return err
 }

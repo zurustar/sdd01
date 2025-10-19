@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/example/enterprise-scheduler/internal/persistence"
 	"github.com/example/enterprise-scheduler/internal/scheduler"
 )
 
@@ -134,7 +135,7 @@ func (s *ScheduleService) CreateSchedule(ctx context.Context, params CreateSched
 
 	persisted, err := s.schedules.CreateSchedule(ctx, schedule)
 	if err != nil {
-		return Schedule{}, nil, err
+		return Schedule{}, nil, mapScheduleRepoError(err)
 	}
 
 	return persisted, warnings, nil
@@ -151,10 +152,7 @@ func (s *ScheduleService) UpdateSchedule(ctx context.Context, params UpdateSched
 
 	existing, err := s.schedules.GetSchedule(ctx, params.ScheduleID)
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return Schedule{}, nil, ErrNotFound
-		}
-		return Schedule{}, nil, err
+		return Schedule{}, nil, mapScheduleRepoError(err)
 	}
 
 	principal := params.Principal
@@ -207,7 +205,7 @@ func (s *ScheduleService) UpdateSchedule(ctx context.Context, params UpdateSched
 
 	persisted, err := s.schedules.UpdateSchedule(ctx, updated)
 	if err != nil {
-		return Schedule{}, nil, err
+		return Schedule{}, nil, mapScheduleRepoError(err)
 	}
 
 	if cleanupNeeded && s.recurrences != nil {
@@ -230,10 +228,7 @@ func (s *ScheduleService) DeleteSchedule(ctx context.Context, principal Principa
 
 	existing, err := s.schedules.GetSchedule(ctx, scheduleID)
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return ErrNotFound
-		}
-		return err
+		return mapScheduleRepoError(err)
 	}
 
 	if existing.CreatorID != principal.UserID && !principal.IsAdmin {
@@ -241,10 +236,7 @@ func (s *ScheduleService) DeleteSchedule(ctx context.Context, principal Principa
 	}
 
 	if err := s.schedules.DeleteSchedule(ctx, scheduleID); err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return ErrNotFound
-		}
-		return err
+		return mapScheduleRepoError(err)
 	}
 
 	if s.recurrences != nil {
@@ -269,7 +261,7 @@ func (s *ScheduleService) ListSchedules(ctx context.Context, params ListSchedule
 
 	schedules, err := s.schedules.ListSchedules(ctx, filter)
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
+		if isNotFoundError(err) {
 			return nil, nil, nil
 		}
 		return nil, nil, err
@@ -329,7 +321,7 @@ func (s *ScheduleService) detectConflicts(ctx context.Context, candidate Schedul
 
 	schedules, err := s.schedules.ListSchedules(ctx, ScheduleRepositoryFilter{})
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
+		if isNotFoundError(err) {
 			return nil, nil
 		}
 		return nil, err
@@ -563,4 +555,34 @@ func detectListConflicts(schedules []Schedule) []ConflictWarning {
 	}
 
 	return warnings
+}
+
+func mapScheduleRepoError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, ErrNotFound) {
+		return ErrNotFound
+	}
+	if errors.Is(err, persistence.ErrNotFound) {
+		return ErrNotFound
+	}
+	if errors.Is(err, persistence.ErrDuplicate) {
+		return ErrAlreadyExists
+	}
+	if errors.Is(err, persistence.ErrConstraintViolation) {
+		vErr := &ValidationError{}
+		vErr.add("time", "start must be before end")
+		return vErr
+	}
+	if errors.Is(err, persistence.ErrForeignKeyViolation) {
+		vErr := &ValidationError{}
+		vErr.add("participants", "related records are missing")
+		return vErr
+	}
+	return err
+}
+
+func isNotFoundError(err error) bool {
+	return errors.Is(err, ErrNotFound) || errors.Is(err, persistence.ErrNotFound)
 }

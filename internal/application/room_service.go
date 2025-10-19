@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/example/enterprise-scheduler/internal/persistence"
 )
 
 // RoomRepository captures the persistence operations needed by the service.
@@ -67,7 +69,7 @@ func (s *RoomService) CreateRoom(ctx context.Context, params CreateRoomParams) (
 
 	persisted, err := s.rooms.CreateRoom(ctx, room)
 	if err != nil {
-		return Room{}, err
+		return Room{}, mapRoomRepoError(err)
 	}
 
 	return persisted, nil
@@ -87,10 +89,7 @@ func (s *RoomService) UpdateRoom(ctx context.Context, params UpdateRoomParams) (
 
 	existing, err := s.rooms.GetRoom(ctx, params.RoomID)
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return Room{}, ErrNotFound
-		}
-		return Room{}, err
+		return Room{}, mapRoomRepoError(err)
 	}
 
 	vErr := validateRoomInput(params.Input)
@@ -107,10 +106,7 @@ func (s *RoomService) UpdateRoom(ctx context.Context, params UpdateRoomParams) (
 
 	persisted, err := s.rooms.UpdateRoom(ctx, updated)
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return Room{}, ErrNotFound
-		}
-		return Room{}, err
+		return Room{}, mapRoomRepoError(err)
 	}
 
 	return persisted, nil
@@ -129,10 +125,7 @@ func (s *RoomService) DeleteRoom(ctx context.Context, principal Principal, roomI
 	}
 
 	if err := s.rooms.DeleteRoom(ctx, roomID); err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return ErrNotFound
-		}
-		return err
+		return mapRoomRepoError(err)
 	}
 
 	return nil
@@ -179,6 +172,27 @@ func validateRoomInput(input RoomInput) *ValidationError {
 	}
 
 	return vErr
+}
+
+func mapRoomRepoError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, ErrNotFound) {
+		return ErrNotFound
+	}
+	if errors.Is(err, persistence.ErrNotFound) {
+		return ErrNotFound
+	}
+	if errors.Is(err, persistence.ErrDuplicate) {
+		return ErrAlreadyExists
+	}
+	if errors.Is(err, persistence.ErrConstraintViolation) {
+		vErr := &ValidationError{}
+		vErr.add("capacity", "capacity must be positive")
+		return vErr
+	}
+	return err
 }
 
 func normalizeOptionalString(value *string) *string {
