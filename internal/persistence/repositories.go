@@ -45,3 +45,10 @@ type RecurrenceRepository interface {
 	DeleteRecurrence(ctx context.Context, id string) error
 	DeleteRecurrencesForSchedule(ctx context.Context, scheduleID string) error
 }
+
+// SessionRepository stores authentication session state.
+type SessionRepository interface {
+	CreateSession(ctx context.Context, session Session) error
+	GetSession(ctx context.Context, token string) (Session, error)
+	UpdateSession(ctx context.Context, session Session) error
+}

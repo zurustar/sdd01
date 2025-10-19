@@ -31,6 +31,9 @@ type Storage struct {
 
 	recurrences        map[string]persistence.RecurrenceRule
 	scheduleRecurrence map[string][]string
+
+	sessions       map[string]persistence.Session
+	sessionByToken map[string]string
 }
 
 // Open initialises the storage using the provided DSN or file path.
@@ -60,6 +63,8 @@ func Open(dsn string) (*Storage, error) {
 		scheduleParticipants: make(map[string][]string),
 		recurrences:          make(map[string]persistence.RecurrenceRule),
 		scheduleRecurrence:   make(map[string][]string),
+		sessions:             make(map[string]persistence.Session),
+		sessionByToken:       make(map[string]string),
 	}, nil
 }
 
@@ -483,6 +488,86 @@ func (s *Storage) DeleteRecurrencesForSchedule(ctx context.Context, scheduleID s
 	return nil
 }
 
+// CreateSession stores a new session token for a user.
+func (s *Storage) CreateSession(ctx context.Context, session persistence.Session) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if session.ID == "" {
+		return persistence.ErrConstraintViolation
+	}
+	if _, exists := s.sessions[session.ID]; exists {
+		return persistence.ErrDuplicate
+	}
+	if session.UserID == "" {
+		return persistence.ErrConstraintViolation
+	}
+	if _, ok := s.users[session.UserID]; !ok {
+		return persistence.ErrForeignKeyViolation
+	}
+
+	normalized, err := normalizeSession(session)
+	if err != nil {
+		return err
+	}
+	if existingID, ok := s.sessionByToken[normalized.Token]; ok && existingID != normalized.ID {
+		return persistence.ErrDuplicate
+	}
+
+	s.sessions[normalized.ID] = normalized
+	s.sessionByToken[normalized.Token] = normalized.ID
+	return nil
+}
+
+// GetSession retrieves a session by its token value.
+func (s *Storage) GetSession(ctx context.Context, token string) (persistence.Session, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	normalizedToken := strings.TrimSpace(token)
+	if normalizedToken == "" {
+		return persistence.Session{}, persistence.ErrNotFound
+	}
+	id, ok := s.sessionByToken[normalizedToken]
+	if !ok {
+		return persistence.Session{}, persistence.ErrNotFound
+	}
+	session := s.sessions[id]
+	return cloneSession(session), nil
+}
+
+// UpdateSession updates mutable fields of an existing session.
+func (s *Storage) UpdateSession(ctx context.Context, session persistence.Session) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	current, ok := s.sessions[session.ID]
+	if !ok {
+		return persistence.ErrNotFound
+	}
+
+	session.ID = current.ID
+	session.UserID = current.UserID
+	session.CreatedAt = current.CreatedAt
+
+	normalized, err := normalizeSession(session)
+	if err != nil {
+		return err
+	}
+
+	if existingID, ok := s.sessionByToken[normalized.Token]; ok && existingID != normalized.ID {
+		return persistence.ErrDuplicate
+	}
+
+	if currentToken := strings.TrimSpace(current.Token); currentToken != normalized.Token {
+		delete(s.sessionByToken, currentToken)
+	}
+
+	s.sessions[normalized.ID] = normalized
+	s.sessionByToken[normalized.Token] = normalized.ID
+	return nil
+}
+
 func (s *Storage) validateScheduleLocked(schedule persistence.Schedule) (persistence.Schedule, error) {
 	if schedule.End.Before(schedule.Start) || schedule.End.Equal(schedule.Start) {
 		return persistence.Schedule{}, persistence.ErrConstraintViolation
@@ -622,4 +707,32 @@ func decodeWeekdays(mask int64) []time.Weekday {
 		}
 	}
 	return result
+}
+
+func normalizeSession(session persistence.Session) (persistence.Session, error) {
+	if session.ID == "" {
+		return persistence.Session{}, persistence.ErrConstraintViolation
+	}
+	session.Token = strings.TrimSpace(session.Token)
+	if session.Token == "" {
+		return persistence.Session{}, persistence.ErrConstraintViolation
+	}
+	session.Fingerprint = strings.TrimSpace(session.Fingerprint)
+	session.CreatedAt = session.CreatedAt.UTC()
+	session.UpdatedAt = session.UpdatedAt.UTC()
+	session.ExpiresAt = session.ExpiresAt.UTC()
+	if session.RevokedAt != nil {
+		revoked := session.RevokedAt.UTC()
+		session.RevokedAt = &revoked
+	}
+	return session, nil
+}
+
+func cloneSession(session persistence.Session) persistence.Session {
+	clone := session
+	if session.RevokedAt != nil {
+		revoked := session.RevokedAt.UTC()
+		clone.RevokedAt = &revoked
+	}
+	return clone
 }
