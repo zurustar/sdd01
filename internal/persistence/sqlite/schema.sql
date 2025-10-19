@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS rooms (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     location TEXT NOT NULL,
-    capacity INTEGER NOT NULL,
+    capacity INTEGER NOT NULL CHECK (capacity > 0),
     facilities TEXT,
     created_at DATETIME NOT NULL,
     updated_at DATETIME NOT NULL
@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS schedules (
     web_conference_url TEXT,
     created_at DATETIME NOT NULL,
     updated_at DATETIME NOT NULL,
+    CHECK (end_at > start_at),
     FOREIGN KEY (creator_id) REFERENCES users(id) ON DELETE RESTRICT,
     FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE SET NULL
 );
@@ -51,5 +52,9 @@ CREATE TABLE IF NOT EXISTS recurrences (
     ends_on DATE,
     created_at DATETIME NOT NULL,
     updated_at DATETIME NOT NULL,
+    CHECK (ends_on IS NULL OR ends_on >= starts_on),
     FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE CASCADE
 );
+
+CREATE INDEX IF NOT EXISTS idx_schedule_participants_participant_schedule ON schedule_participants(participant_id, schedule_id);
+CREATE INDEX IF NOT EXISTS idx_schedules_start_end ON schedules(start_at, end_at);
