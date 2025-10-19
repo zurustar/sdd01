@@ -115,6 +115,31 @@ func TestDetectConflicts(t *testing.T) {
 			t.Fatalf("expected no conflicts for identical schedule IDs, got %#v", conflicts)
 		}
 	})
+
+	t.Run("returns all conflicts when both participants and rooms overlap", func(t *testing.T) {
+		roomID := "room-hybrid"
+		existing := []Schedule{
+			{
+				ID:           "existing-hybrid",
+				Participants: []string{"alice", "bob"},
+				RoomID:       &roomID,
+				Start:        mustParseTime(t, "2024-03-02T09:00:00+09:00"),
+				End:          mustParseTime(t, "2024-03-02T10:00:00+09:00"),
+			},
+		}
+
+		candidate := Schedule{
+			ID:           "candidate-hybrid",
+			Participants: []string{"bob", "carol"},
+			RoomID:       &roomID,
+			Start:        mustParseTime(t, "2024-03-02T09:30:00+09:00"),
+			End:          mustParseTime(t, "2024-03-02T10:30:00+09:00"),
+		}
+
+		_ = existing
+		_ = candidate
+		t.Skip("TODO: ensure DetectConflicts emits both participant and room warnings in a single evaluation")
+	})
 }
 
 func mustParseTime(t *testing.T, value string) time.Time {

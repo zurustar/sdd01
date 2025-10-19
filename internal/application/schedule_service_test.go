@@ -1,0 +1,454 @@
+package application
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+)
+
+type scheduleRepoStub struct {
+	schedule  Schedule
+	created   Schedule
+	updated   Schedule
+	err       error
+	deleteErr error
+}
+
+func (s *scheduleRepoStub) CreateSchedule(ctx context.Context, schedule Schedule) (Schedule, error) {
+	if s.err != nil {
+		return Schedule{}, s.err
+	}
+	s.created = schedule
+	return schedule, nil
+}
+
+func (s *scheduleRepoStub) GetSchedule(ctx context.Context, id string) (Schedule, error) {
+	if s.err != nil {
+		return Schedule{}, s.err
+	}
+	if s.schedule.ID == "" {
+		return Schedule{}, ErrNotFound
+	}
+	return s.schedule, nil
+}
+
+func (s *scheduleRepoStub) UpdateSchedule(ctx context.Context, schedule Schedule) (Schedule, error) {
+	if s.err != nil {
+		return Schedule{}, s.err
+	}
+	s.updated = schedule
+	return schedule, nil
+}
+
+func (s *scheduleRepoStub) DeleteSchedule(ctx context.Context, id string) error {
+	return s.deleteErr
+}
+
+type userDirectoryStub struct {
+	missing []string
+	err     error
+}
+
+func (u *userDirectoryStub) MissingUserIDs(ctx context.Context, ids []string) ([]string, error) {
+	if u.err != nil {
+		return nil, u.err
+	}
+	return u.missing, nil
+}
+
+type roomCatalogStub struct {
+	exists bool
+	err    error
+}
+
+func (r *roomCatalogStub) RoomExists(ctx context.Context, id string) (bool, error) {
+	if r.err != nil {
+		return false, r.err
+	}
+	return r.exists, nil
+}
+
+func mustJST(t *testing.T, hour int) time.Time {
+	t.Helper()
+	loc, err := time.LoadLocation("Asia/Tokyo")
+	if err != nil {
+		t.Fatalf("failed to load JST location: %v", err)
+	}
+	return time.Date(2024, 3, 14, hour, 0, 0, 0, loc)
+}
+
+func TestScheduleService_CreateSchedule_ValidatesTemporalBounds(t *testing.T) {
+	t.Parallel()
+
+	repo := &scheduleRepoStub{}
+	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, func() string { return "schedule-1" }, func() time.Time { return mustJST(t, 9) })
+
+	_, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
+		Principal: Principal{UserID: "user-1"},
+		Input: ScheduleInput{
+			CreatorID:      "user-1",
+			Title:          "Design sync",
+			Start:          mustJST(t, 10),
+			End:            mustJST(t, 9),
+			ParticipantIDs: []string{"user-1"},
+		},
+	})
+
+	var vErr *ValidationError
+	if !errors.As(err, &vErr) {
+		t.Fatalf("expected ValidationError, got %v", err)
+	}
+
+	if _, ok := vErr.FieldErrors["time"]; !ok {
+		t.Fatalf("expected time validation error, got %v", vErr.FieldErrors)
+	}
+}
+
+func TestScheduleService_CreateSchedule_ValidatesRequiredFields(t *testing.T) {
+	t.Parallel()
+
+	svc := NewScheduleService(&scheduleRepoStub{}, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, func() time.Time { return mustJST(t, 9) })
+
+	_, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
+		Principal: Principal{UserID: "user-1"},
+		Input: ScheduleInput{
+			CreatorID: "user-1",
+			Start:     mustJST(t, 9),
+			End:       mustJST(t, 10),
+		},
+	})
+
+	var vErr *ValidationError
+	if !errors.As(err, &vErr) {
+		t.Fatalf("expected ValidationError, got %v", err)
+	}
+
+	if _, ok := vErr.FieldErrors["title"]; !ok {
+		t.Fatalf("expected title validation error, got %v", vErr.FieldErrors)
+	}
+
+	if _, ok := vErr.FieldErrors["participants"]; !ok {
+		t.Fatalf("expected participants validation error, got %v", vErr.FieldErrors)
+	}
+}
+
+func TestScheduleService_CreateSchedule_ValidatesWebConferenceURL(t *testing.T) {
+	t.Parallel()
+
+	svc := NewScheduleService(&scheduleRepoStub{}, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, func() time.Time { return mustJST(t, 9) })
+
+	_, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
+		Principal: Principal{UserID: "user-1"},
+		Input: ScheduleInput{
+			CreatorID:        "user-1",
+			Title:            "Design sync",
+			Start:            mustJST(t, 9),
+			End:              mustJST(t, 10),
+			ParticipantIDs:   []string{"user-1"},
+			WebConferenceURL: "not-a-url",
+		},
+	})
+
+	var vErr *ValidationError
+	if !errors.As(err, &vErr) {
+		t.Fatalf("expected ValidationError, got %v", err)
+	}
+
+	if _, ok := vErr.FieldErrors["web_conference_url"]; !ok {
+		t.Fatalf("expected web_conference_url validation error, got %v", vErr.FieldErrors)
+	}
+}
+
+func TestScheduleService_CreateSchedule_PreventsCreatorSpoofingForRegularUsers(t *testing.T) {
+	t.Parallel()
+
+	svc := NewScheduleService(&scheduleRepoStub{}, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, nil)
+
+	_, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
+		Principal: Principal{UserID: "user-1", IsAdmin: false},
+		Input: ScheduleInput{
+			CreatorID:      "user-2",
+			Title:          "Design sync",
+			Start:          mustJST(t, 9),
+			End:            mustJST(t, 10),
+			ParticipantIDs: []string{"user-2"},
+		},
+	})
+
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("expected ErrUnauthorized, got %v", err)
+	}
+}
+
+func TestScheduleService_CreateSchedule_AllowsAdministratorOverrides(t *testing.T) {
+	t.Parallel()
+
+	repo := &scheduleRepoStub{}
+	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, func() string { return "schedule-1" }, func() time.Time { return mustJST(t, 9) })
+
+	_, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
+		Principal: Principal{UserID: "admin", IsAdmin: true},
+		Input: ScheduleInput{
+			CreatorID:      "user-2",
+			Title:          "Design sync",
+			Start:          mustJST(t, 9),
+			End:            mustJST(t, 10),
+			ParticipantIDs: []string{"user-2"},
+		},
+	})
+
+	if err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+
+	if repo.created.CreatorID != "user-2" {
+		t.Fatalf("expected creator to remain user-2, got %s", repo.created.CreatorID)
+	}
+}
+
+func TestScheduleService_CreateSchedule_VerifiesParticipantsExist(t *testing.T) {
+	t.Parallel()
+
+	svc := NewScheduleService(&scheduleRepoStub{}, &userDirectoryStub{missing: []string{"user-2"}}, &roomCatalogStub{exists: true}, nil, func() time.Time { return mustJST(t, 9) })
+
+	_, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
+		Principal: Principal{UserID: "admin", IsAdmin: true},
+		Input: ScheduleInput{
+			CreatorID:      "user-2",
+			Title:          "Design sync",
+			Start:          mustJST(t, 9),
+			End:            mustJST(t, 10),
+			ParticipantIDs: []string{"user-2"},
+		},
+	})
+
+	var vErr *ValidationError
+	if !errors.As(err, &vErr) {
+		t.Fatalf("expected ValidationError, got %v", err)
+	}
+
+	if _, ok := vErr.FieldErrors["participants"]; !ok {
+		t.Fatalf("expected participants validation error, got %v", vErr.FieldErrors)
+	}
+}
+
+func TestScheduleService_CreateSchedule_VerifiesRoomExistence(t *testing.T) {
+	t.Parallel()
+
+	roomID := "room-1"
+	svc := NewScheduleService(&scheduleRepoStub{}, &userDirectoryStub{}, &roomCatalogStub{exists: false}, nil, func() time.Time { return mustJST(t, 9) })
+
+	_, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
+		Principal: Principal{UserID: "user-1"},
+		Input: ScheduleInput{
+			CreatorID:      "user-1",
+			Title:          "Design sync",
+			Start:          mustJST(t, 9),
+			End:            mustJST(t, 10),
+			RoomID:         &roomID,
+			ParticipantIDs: []string{"user-1"},
+		},
+	})
+
+	var vErr *ValidationError
+	if !errors.As(err, &vErr) {
+		t.Fatalf("expected ValidationError, got %v", err)
+	}
+
+	if _, ok := vErr.FieldErrors["room_id"]; !ok {
+		t.Fatalf("expected room_id validation error, got %v", vErr.FieldErrors)
+	}
+}
+
+func TestScheduleService_CreateSchedule_AllowsHybridMeetings(t *testing.T) {
+	t.Parallel()
+
+	roomID := "room-1"
+	repo := &scheduleRepoStub{schedule: Schedule{ID: "schedule-1", CreatorID: "user-1"}}
+	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, func() string { return "schedule-1" }, func() time.Time { return mustJST(t, 9) })
+
+	_, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
+		Principal: Principal{UserID: "user-1"},
+		Input: ScheduleInput{
+			CreatorID:        "user-1",
+			Title:            "Design sync",
+			Start:            mustJST(t, 9),
+			End:              mustJST(t, 10),
+			RoomID:           &roomID,
+			WebConferenceURL: "https://example.com/meet",
+			ParticipantIDs:   []string{"user-1"},
+		},
+	})
+
+	if err != nil {
+		t.Fatalf("expected success for hybrid meeting, got %v", err)
+	}
+
+	if repo.created.RoomID == nil || *repo.created.RoomID != roomID {
+		t.Fatalf("expected room to be persisted, got %v", repo.created.RoomID)
+	}
+
+	if repo.created.WebConferenceURL != "https://example.com/meet" {
+		t.Fatalf("expected web conference URL to persist, got %s", repo.created.WebConferenceURL)
+	}
+}
+
+func TestScheduleService_UpdateSchedule_ValidatesCreatorImmutability(t *testing.T) {
+	t.Parallel()
+
+	repo := &scheduleRepoStub{schedule: Schedule{
+		ID:             "schedule-1",
+		CreatorID:      "user-1",
+		Title:          "Design sync",
+		Start:          mustJST(t, 9),
+		End:            mustJST(t, 10),
+		CreatedAt:      mustJST(t, 8),
+		UpdatedAt:      mustJST(t, 8),
+		ParticipantIDs: []string{"user-1"},
+	}}
+	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, func() time.Time { return mustJST(t, 9) })
+
+	_, err := svc.UpdateSchedule(context.Background(), UpdateScheduleParams{
+		Principal:  Principal{UserID: "user-1"},
+		ScheduleID: "schedule-1",
+		Input: ScheduleInput{
+			CreatorID:      "user-2",
+			Title:          "Updated",
+			Start:          mustJST(t, 9),
+			End:            mustJST(t, 10),
+			ParticipantIDs: []string{"user-1"},
+		},
+	})
+
+	var vErr *ValidationError
+	if !errors.As(err, &vErr) {
+		t.Fatalf("expected ValidationError, got %v", err)
+	}
+
+	if _, ok := vErr.FieldErrors["creator_id"]; !ok {
+		t.Fatalf("expected creator_id validation error, got %v", vErr.FieldErrors)
+	}
+}
+
+func TestScheduleService_UpdateSchedule_BlocksUnauthorizedUsers(t *testing.T) {
+	t.Parallel()
+
+	repo := &scheduleRepoStub{schedule: Schedule{
+		ID:             "schedule-1",
+		CreatorID:      "user-1",
+		Title:          "Design sync",
+		Start:          mustJST(t, 9),
+		End:            mustJST(t, 10),
+		ParticipantIDs: []string{"user-1"},
+	}}
+	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, func() time.Time { return mustJST(t, 9) })
+
+	_, err := svc.UpdateSchedule(context.Background(), UpdateScheduleParams{
+		Principal:  Principal{UserID: "user-2"},
+		ScheduleID: "schedule-1",
+		Input: ScheduleInput{
+			CreatorID:      "user-1",
+			Title:          "Design sync",
+			Start:          mustJST(t, 9),
+			End:            mustJST(t, 10),
+			ParticipantIDs: []string{"user-1"},
+		},
+	})
+
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("expected ErrUnauthorized, got %v", err)
+	}
+}
+
+func TestScheduleService_UpdateSchedule_AllowsAdministratorOverride(t *testing.T) {
+	t.Parallel()
+
+	repo := &scheduleRepoStub{schedule: Schedule{
+		ID:             "schedule-1",
+		CreatorID:      "user-1",
+		Title:          "Design sync",
+		Start:          mustJST(t, 9),
+		End:            mustJST(t, 10),
+		ParticipantIDs: []string{"user-1"},
+	}}
+	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, func() time.Time { return mustJST(t, 9) })
+
+	_, err := svc.UpdateSchedule(context.Background(), UpdateScheduleParams{
+		Principal:  Principal{UserID: "admin", IsAdmin: true},
+		ScheduleID: "schedule-1",
+		Input: ScheduleInput{
+			CreatorID:      "user-1",
+			Title:          "Updated",
+			Start:          mustJST(t, 9),
+			End:            mustJST(t, 11),
+			ParticipantIDs: []string{"user-1"},
+		},
+	})
+
+	if err != nil {
+		t.Fatalf("expected update success for admin override, got %v", err)
+	}
+
+	if repo.updated.Title != "Updated" {
+		t.Fatalf("expected updated title, got %s", repo.updated.Title)
+	}
+}
+
+func TestScheduleService_UpdateSchedule_ValidatesTemporalBounds(t *testing.T) {
+	t.Parallel()
+
+	repo := &scheduleRepoStub{schedule: Schedule{
+		ID:             "schedule-1",
+		CreatorID:      "user-1",
+		Title:          "Design sync",
+		Start:          mustJST(t, 9),
+		End:            mustJST(t, 10),
+		ParticipantIDs: []string{"user-1"},
+	}}
+	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, func() time.Time { return mustJST(t, 9) })
+
+	_, err := svc.UpdateSchedule(context.Background(), UpdateScheduleParams{
+		Principal:  Principal{UserID: "user-1"},
+		ScheduleID: "schedule-1",
+		Input: ScheduleInput{
+			CreatorID:      "user-1",
+			Title:          "Design sync",
+			Start:          mustJST(t, 11),
+			End:            mustJST(t, 10),
+			ParticipantIDs: []string{"user-1"},
+		},
+	})
+
+	var vErr *ValidationError
+	if !errors.As(err, &vErr) {
+		t.Fatalf("expected ValidationError, got %v", err)
+	}
+
+	if _, ok := vErr.FieldErrors["time"]; !ok {
+		t.Fatalf("expected time validation error, got %v", vErr.FieldErrors)
+	}
+}
+
+func TestScheduleService_DeleteSchedule_BlocksUnauthorizedUsers(t *testing.T) {
+	t.Parallel()
+
+	repo := &scheduleRepoStub{schedule: Schedule{ID: "schedule-1", CreatorID: "user-1"}}
+	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, nil)
+
+	err := svc.DeleteSchedule(context.Background(), Principal{UserID: "user-2"}, "schedule-1")
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("expected ErrUnauthorized, got %v", err)
+	}
+}
+
+func TestScheduleService_DeleteSchedule_AllowsAdministratorOverride(t *testing.T) {
+	t.Parallel()
+
+	repo := &scheduleRepoStub{schedule: Schedule{ID: "schedule-1", CreatorID: "user-1"}}
+	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, nil)
+
+	if err := svc.DeleteSchedule(context.Background(), Principal{UserID: "admin", IsAdmin: true}, "schedule-1"); err != nil {
+		t.Fatalf("expected admin delete to succeed, got %v", err)
+	}
+}
