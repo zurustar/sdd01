@@ -48,7 +48,9 @@ type RecurrenceRepository interface {
 
 // SessionRepository stores authentication session state.
 type SessionRepository interface {
-	CreateSession(ctx context.Context, session Session) error
+	CreateSession(ctx context.Context, session Session) (Session, error)
 	GetSession(ctx context.Context, token string) (Session, error)
-	UpdateSession(ctx context.Context, session Session) error
+	UpdateSession(ctx context.Context, session Session) (Session, error)
+	RevokeSession(ctx context.Context, token string, revokedAt time.Time) (Session, error)
+	DeleteExpiredSessions(ctx context.Context, reference time.Time) error
 }

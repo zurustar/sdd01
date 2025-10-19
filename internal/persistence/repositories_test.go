@@ -23,12 +23,13 @@ func TestUserRepository(t *testing.T) {
 		defer harness.Cleanup()
 
 		user := persistence.User{
-			ID:          "user-1",
-			Email:       "alice@example.com",
-			DisplayName: "Alice",
-			IsAdmin:     true,
-			CreatedAt:   time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC),
-			UpdatedAt:   time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC),
+			ID:           "user-1",
+			Email:        "alice@example.com",
+			DisplayName:  "Alice",
+			PasswordHash: "hash",
+			IsAdmin:      true,
+			CreatedAt:    time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC),
+			UpdatedAt:    time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC),
 		}
 
 		if err := harness.Users.CreateUser(ctx, user); err != nil {
@@ -39,7 +40,7 @@ func TestUserRepository(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetUser failed: %v", err)
 		}
-		if fetched.Email != user.Email || !fetched.IsAdmin {
+		if fetched.Email != user.Email || !fetched.IsAdmin || fetched.PasswordHash != user.PasswordHash {
 			t.Fatalf("unexpected user data: %#v", fetched)
 		}
 
@@ -54,7 +55,7 @@ func TestUserRepository(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetUserByEmail failed: %v", err)
 		}
-		if fetched.DisplayName != "Alice Updated" || fetched.IsAdmin {
+		if fetched.DisplayName != "Alice Updated" || fetched.IsAdmin || fetched.PasswordHash != user.PasswordHash {
 			t.Fatalf("unexpected updated user: %#v", fetched)
 		}
 
@@ -81,12 +82,12 @@ func TestUserRepository(t *testing.T) {
 		harness := newSQLiteHarness(t)
 		defer harness.Cleanup()
 
-		primary := persistence.User{ID: "user-1", Email: "duplicate@example.com", DisplayName: "Primary", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
+		primary := persistence.User{ID: "user-1", Email: "duplicate@example.com", DisplayName: "Primary", PasswordHash: "hash", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
 		if err := harness.Users.CreateUser(ctx, primary); err != nil {
 			t.Fatalf("CreateUser failed: %v", err)
 		}
 
-		conflicting := persistence.User{ID: "user-2", Email: "duplicate@example.com", DisplayName: "Conflict", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
+		conflicting := persistence.User{ID: "user-2", Email: "duplicate@example.com", DisplayName: "Conflict", PasswordHash: "hash", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
 		if err := harness.Users.CreateUser(ctx, conflicting); !errors.Is(err, persistence.ErrDuplicate) {
 			t.Fatalf("expected persistence.ErrDuplicate, got %v", err)
 		}
@@ -99,7 +100,7 @@ func TestUserRepository(t *testing.T) {
 		harness := newSQLiteHarness(t)
 		defer harness.Cleanup()
 
-		user := persistence.User{ID: "user-lookup", Email: "lookup@example.com", DisplayName: "Lookup", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
+		user := persistence.User{ID: "user-lookup", Email: "lookup@example.com", DisplayName: "Lookup", PasswordHash: "hash", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
 		if err := harness.Users.CreateUser(ctx, user); err != nil {
 			t.Fatalf("CreateUser failed: %v", err)
 		}
@@ -122,9 +123,9 @@ func TestUserRepository(t *testing.T) {
 
 		base := time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)
 		users := []persistence.User{
-			{ID: "user-a", Email: "a@example.com", DisplayName: "A", CreatedAt: base, UpdatedAt: base},
-			{ID: "user-c", Email: "c@example.com", DisplayName: "C", CreatedAt: base.Add(time.Minute), UpdatedAt: base.Add(time.Minute)},
-			{ID: "user-b", Email: "b@example.com", DisplayName: "B", CreatedAt: base, UpdatedAt: base},
+			{ID: "user-a", Email: "a@example.com", DisplayName: "A", PasswordHash: "hash", CreatedAt: base, UpdatedAt: base},
+			{ID: "user-c", Email: "c@example.com", DisplayName: "C", PasswordHash: "hash", CreatedAt: base.Add(time.Minute), UpdatedAt: base.Add(time.Minute)},
+			{ID: "user-b", Email: "b@example.com", DisplayName: "B", PasswordHash: "hash", CreatedAt: base, UpdatedAt: base},
 		}
 		for _, u := range users {
 			if err := harness.Users.CreateUser(ctx, u); err != nil {
@@ -156,7 +157,7 @@ func TestRoomRepository(t *testing.T) {
 
 		// Seed creator to allow schedule references.
 		now := time.Now().UTC().Truncate(time.Second)
-		creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", CreatedAt: now, UpdatedAt: now}
+		creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now}
 		if err := harness.Users.CreateUser(ctx, creator); err != nil {
 			t.Fatalf("failed to seed creator: %v", err)
 		}
@@ -279,8 +280,8 @@ func TestScheduleRepository(t *testing.T) {
 		defer harness.Cleanup()
 
 		now := time.Now().UTC().Truncate(time.Second)
-		creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", CreatedAt: now, UpdatedAt: now}
-		attendee := persistence.User{ID: "attendee", Email: "attendee@example.com", DisplayName: "Attendee", CreatedAt: now, UpdatedAt: now}
+		creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now}
+		attendee := persistence.User{ID: "attendee", Email: "attendee@example.com", DisplayName: "Attendee", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now}
 		if err := harness.Users.CreateUser(ctx, creator); err != nil {
 			t.Fatalf("failed to seed creator: %v", err)
 		}
@@ -319,9 +320,9 @@ func TestScheduleRepository(t *testing.T) {
 		defer harness.Cleanup()
 
 		now := time.Now().UTC().Truncate(time.Second)
-		creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", CreatedAt: now, UpdatedAt: now}
-		colleague := persistence.User{ID: "colleague", Email: "colleague@example.com", DisplayName: "Colleague", CreatedAt: now, UpdatedAt: now}
-		outsider := persistence.User{ID: "outsider", Email: "outsider@example.com", DisplayName: "Outsider", CreatedAt: now, UpdatedAt: now}
+		creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now}
+		colleague := persistence.User{ID: "colleague", Email: "colleague@example.com", DisplayName: "Colleague", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now}
+		outsider := persistence.User{ID: "outsider", Email: "outsider@example.com", DisplayName: "Outsider", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now}
 		for _, u := range []persistence.User{creator, colleague, outsider} {
 			if err := harness.Users.CreateUser(ctx, u); err != nil {
 				t.Fatalf("failed to seed user %s: %v", u.ID, err)
@@ -389,9 +390,9 @@ func TestScheduleRepository(t *testing.T) {
 		defer harness.Cleanup()
 
 		now := time.Now().UTC().Truncate(time.Second)
-		creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", CreatedAt: now, UpdatedAt: now}
-		colleague := persistence.User{ID: "colleague", Email: "colleague@example.com", DisplayName: "Colleague", CreatedAt: now, UpdatedAt: now}
-		stranger := persistence.User{ID: "stranger", Email: "stranger@example.com", DisplayName: "Stranger", CreatedAt: now, UpdatedAt: now}
+		creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now}
+		colleague := persistence.User{ID: "colleague", Email: "colleague@example.com", DisplayName: "Colleague", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now}
+		stranger := persistence.User{ID: "stranger", Email: "stranger@example.com", DisplayName: "Stranger", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now}
 		for _, u := range []persistence.User{creator, colleague, stranger} {
 			if err := harness.Users.CreateUser(ctx, u); err != nil {
 				t.Fatalf("failed to seed user %s: %v", u.ID, err)
@@ -461,10 +462,10 @@ func TestScheduleRepository(t *testing.T) {
 
 		now := time.Now().UTC().Truncate(time.Second)
 		users := []persistence.User{
-			{ID: "principal", Email: "principal@example.com", DisplayName: "Principal", CreatedAt: now, UpdatedAt: now},
-			{ID: "colleague-a", Email: "a@example.com", DisplayName: "A", CreatedAt: now, UpdatedAt: now},
-			{ID: "colleague-b", Email: "b@example.com", DisplayName: "B", CreatedAt: now, UpdatedAt: now},
-			{ID: "other", Email: "other@example.com", DisplayName: "Other", CreatedAt: now, UpdatedAt: now},
+			{ID: "principal", Email: "principal@example.com", DisplayName: "Principal", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now},
+			{ID: "colleague-a", Email: "a@example.com", DisplayName: "A", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now},
+			{ID: "colleague-b", Email: "b@example.com", DisplayName: "B", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now},
+			{ID: "other", Email: "other@example.com", DisplayName: "Other", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now},
 		}
 		for _, u := range users {
 			if err := harness.Users.CreateUser(ctx, u); err != nil {
@@ -508,7 +509,7 @@ func TestScheduleRepository(t *testing.T) {
 		defer harness.Cleanup()
 
 		now := time.Now().UTC().Truncate(time.Second)
-		creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", CreatedAt: now, UpdatedAt: now}
+		creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now}
 		if err := harness.Users.CreateUser(ctx, creator); err != nil {
 			t.Fatalf("failed to seed creator: %v", err)
 		}
@@ -543,7 +544,7 @@ func TestScheduleRepository(t *testing.T) {
 		defer harness.Cleanup()
 
 		now := time.Now().UTC()
-		creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", CreatedAt: now, UpdatedAt: now}
+		creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now}
 		if err := harness.Users.CreateUser(ctx, creator); err != nil {
 			t.Fatalf("failed to seed creator: %v", err)
 		}
@@ -563,8 +564,8 @@ func TestScheduleRepository(t *testing.T) {
 
 		now := time.Now().UTC()
 		users := []persistence.User{
-			{ID: "user-a", Email: "a@example.com", DisplayName: "A", CreatedAt: now, UpdatedAt: now},
-			{ID: "user-b", Email: "b@example.com", DisplayName: "B", CreatedAt: now, UpdatedAt: now},
+			{ID: "user-a", Email: "a@example.com", DisplayName: "A", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now},
+			{ID: "user-b", Email: "b@example.com", DisplayName: "B", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now},
 		}
 		for _, u := range users {
 			if err := harness.Users.CreateUser(ctx, u); err != nil {
@@ -603,7 +604,7 @@ func TestScheduleRepository(t *testing.T) {
 		defer harness.Cleanup()
 
 		now := time.Now().UTC()
-		creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", CreatedAt: now, UpdatedAt: now}
+		creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now}
 		if err := harness.Users.CreateUser(ctx, creator); err != nil {
 			t.Fatalf("failed to seed creator: %v", err)
 		}
@@ -646,7 +647,7 @@ func TestRecurrenceRepository(t *testing.T) {
 		defer harness.Cleanup()
 
 		now := time.Now().UTC().Truncate(time.Second)
-		creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", CreatedAt: now, UpdatedAt: now}
+		creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now}
 		if err := harness.Users.CreateUser(ctx, creator); err != nil {
 			t.Fatalf("failed to seed creator: %v", err)
 		}
@@ -696,7 +697,7 @@ func TestRecurrenceRepository(t *testing.T) {
 		defer harness.Cleanup()
 
 		now := time.Now().UTC()
-		creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", CreatedAt: now, UpdatedAt: now}
+		creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now}
 		if err := harness.Users.CreateUser(ctx, creator); err != nil {
 			t.Fatalf("failed to seed creator: %v", err)
 		}
@@ -734,7 +735,7 @@ func TestRecurrenceRepository(t *testing.T) {
 		defer harness.Cleanup()
 
 		now := time.Now().UTC()
-		creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", CreatedAt: now, UpdatedAt: now}
+		creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now}
 		if err := harness.Users.CreateUser(ctx, creator); err != nil {
 			t.Fatalf("failed to seed creator: %v", err)
 		}
@@ -763,14 +764,18 @@ func TestSessionRepository(t *testing.T) {
 		defer harness.Cleanup()
 
 		now := time.Now().UTC().Truncate(time.Second)
-		user := persistence.User{ID: "user-session", Email: "session@example.com", DisplayName: "Session", CreatedAt: now, UpdatedAt: now}
+		user := persistence.User{ID: "user-session", Email: "session@example.com", DisplayName: "Session", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now}
 		if err := harness.Users.CreateUser(ctx, user); err != nil {
 			t.Fatalf("failed to seed user: %v", err)
 		}
 
 		session := persistence.Session{ID: "session-1", UserID: user.ID, Token: "token-1", Fingerprint: "fp", CreatedAt: now, UpdatedAt: now, ExpiresAt: now.Add(24 * time.Hour)}
-		if err := harness.Sessions.CreateSession(ctx, session); err != nil {
+		created, err := harness.Sessions.CreateSession(ctx, session)
+		if err != nil {
 			t.Fatalf("CreateSession failed: %v", err)
+		}
+		if created.Token != session.Token || created.ExpiresAt.IsZero() {
+			t.Fatalf("unexpected created session: %#v", created)
 		}
 
 		fetched, err := harness.Sessions.GetSession(ctx, session.Token)
@@ -787,9 +792,12 @@ func TestSessionRepository(t *testing.T) {
 		session.Fingerprint = "fp-2"
 		session.UpdatedAt = now.Add(6 * time.Hour)
 		session.ExpiresAt = now.Add(48 * time.Hour)
-		session.RevokedAt = &revokedAt
-		if err := harness.Sessions.UpdateSession(ctx, session); err != nil {
+		updatedSession, err := harness.Sessions.UpdateSession(ctx, session)
+		if err != nil {
 			t.Fatalf("UpdateSession failed: %v", err)
+		}
+		if updatedSession.Token != newToken || updatedSession.Fingerprint != "fp-2" {
+			t.Fatalf("unexpected updated clone: %#v", updatedSession)
 		}
 
 		updated, err := harness.Sessions.GetSession(ctx, newToken)
@@ -799,8 +807,21 @@ func TestSessionRepository(t *testing.T) {
 		if updated.Token != newToken || updated.Fingerprint != "fp-2" {
 			t.Fatalf("unexpected updated session: %#v", updated)
 		}
-		if updated.RevokedAt == nil || !updated.RevokedAt.Equal(revokedAt) {
-			t.Fatalf("expected revoked timestamp, got %#v", updated.RevokedAt)
+
+		revoked, err := harness.Sessions.RevokeSession(ctx, newToken, revokedAt)
+		if err != nil {
+			t.Fatalf("RevokeSession failed: %v", err)
+		}
+		if revoked.RevokedAt == nil || !revoked.RevokedAt.Equal(revokedAt) {
+			t.Fatalf("expected revoked timestamp, got %#v", revoked.RevokedAt)
+		}
+
+		prunedAt := now.Add(72 * time.Hour)
+		if err := harness.Sessions.DeleteExpiredSessions(ctx, prunedAt); err != nil {
+			t.Fatalf("DeleteExpiredSessions failed: %v", err)
+		}
+		if _, err := harness.Sessions.GetSession(ctx, newToken); !errors.Is(err, persistence.ErrNotFound) {
+			t.Fatalf("expected ErrNotFound after pruning, got %v", err)
 		}
 	})
 
@@ -812,28 +833,32 @@ func TestSessionRepository(t *testing.T) {
 		defer harness.Cleanup()
 
 		now := time.Now().UTC()
-		user := persistence.User{ID: "user", Email: "user@example.com", DisplayName: "User", CreatedAt: now, UpdatedAt: now}
+		user := persistence.User{ID: "user", Email: "user@example.com", DisplayName: "User", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now}
 		if err := harness.Users.CreateUser(ctx, user); err != nil {
 			t.Fatalf("failed to seed user: %v", err)
 		}
 
 		session := persistence.Session{ID: "session", UserID: user.ID, Token: "token", CreatedAt: now, UpdatedAt: now, ExpiresAt: now.Add(time.Hour)}
-		if err := harness.Sessions.CreateSession(ctx, session); err != nil {
+		if _, err := harness.Sessions.CreateSession(ctx, session); err != nil {
 			t.Fatalf("CreateSession failed: %v", err)
 		}
 
 		duplicateToken := persistence.Session{ID: "other-session", UserID: user.ID, Token: "token", CreatedAt: now, UpdatedAt: now, ExpiresAt: now.Add(time.Hour)}
-		if err := harness.Sessions.CreateSession(ctx, duplicateToken); !errors.Is(err, persistence.ErrDuplicate) {
+		if _, err := harness.Sessions.CreateSession(ctx, duplicateToken); !errors.Is(err, persistence.ErrDuplicate) {
 			t.Fatalf("expected persistence.ErrDuplicate, got %v", err)
 		}
 
 		foreign := persistence.Session{ID: "foreign", UserID: "missing", Token: "token-foreign", CreatedAt: now, UpdatedAt: now, ExpiresAt: now.Add(time.Hour)}
-		if err := harness.Sessions.CreateSession(ctx, foreign); !errors.Is(err, persistence.ErrForeignKeyViolation) {
+		if _, err := harness.Sessions.CreateSession(ctx, foreign); !errors.Is(err, persistence.ErrForeignKeyViolation) {
 			t.Fatalf("expected persistence.ErrForeignKeyViolation, got %v", err)
 		}
 
-		if err := harness.Sessions.UpdateSession(ctx, persistence.Session{ID: "missing", Token: "does-not-exist", UpdatedAt: now}); !errors.Is(err, persistence.ErrNotFound) {
+		if _, err := harness.Sessions.UpdateSession(ctx, persistence.Session{ID: "missing", Token: "does-not-exist", UpdatedAt: now}); !errors.Is(err, persistence.ErrNotFound) {
 			t.Fatalf("expected persistence.ErrNotFound on update, got %v", err)
+		}
+
+		if _, err := harness.Sessions.RevokeSession(ctx, "unknown", now); !errors.Is(err, persistence.ErrNotFound) {
+			t.Fatalf("expected persistence.ErrNotFound on revoke, got %v", err)
 		}
 	})
 }

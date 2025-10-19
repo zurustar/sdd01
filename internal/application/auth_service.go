@@ -19,6 +19,8 @@ type SessionRepository interface {
 	CreateSession(ctx context.Context, session Session) (Session, error)
 	GetSession(ctx context.Context, token string) (Session, error)
 	UpdateSession(ctx context.Context, session Session) (Session, error)
+	RevokeSession(ctx context.Context, token string, revokedAt time.Time) (Session, error)
+	DeleteExpiredSessions(ctx context.Context, reference time.Time) error
 }
 
 // PasswordVerifier compares a stored hash with a candidate password.
@@ -116,6 +118,10 @@ func (s *AuthService) Authenticate(ctx context.Context, params AuthenticateParam
 	}
 
 	if s.sessions != nil {
+		if err := s.sessions.DeleteExpiredSessions(ctx, now); err != nil {
+			return AuthenticateResult{}, err
+		}
+
 		persisted, err := s.sessions.CreateSession(ctx, session)
 		if err != nil {
 			return AuthenticateResult{}, err
@@ -174,4 +180,31 @@ func (s *AuthService) RefreshSession(ctx context.Context, params RefreshSessionP
 	}
 
 	return RefreshSessionResult{Session: persisted}, nil
+}
+
+// RevokeSession invalidates an existing session token.
+func (s *AuthService) RevokeSession(ctx context.Context, token string) error {
+	if s == nil {
+		return fmt.Errorf("AuthService is nil")
+	}
+	if s.sessions == nil {
+		return fmt.Errorf("session repository not configured")
+	}
+
+	trimmed := strings.TrimSpace(token)
+	if trimmed == "" {
+		return ErrInvalidCredentials
+	}
+
+	if _, err := s.sessions.RevokeSession(ctx, trimmed, s.now()); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return ErrInvalidCredentials
+		}
+		return err
+	}
+
+	if err := s.sessions.DeleteExpiredSessions(ctx, s.now()); err != nil {
+		return err
+	}
+	return nil
 }
