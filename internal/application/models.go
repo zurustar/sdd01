@@ -141,3 +141,48 @@ type UpdateUserParams struct {
 	UserID    string
 	Input     UserInput
 }
+
+// UserCredentials models the authentication attributes persisted for a user.
+type UserCredentials struct {
+	User           User
+	PasswordHash   string
+	Disabled       bool
+	FailedAttempts int
+	LastFailedAt   *time.Time
+}
+
+// Session represents an authenticated session issued to a user.
+type Session struct {
+	ID          string
+	UserID      string
+	Token       string
+	Fingerprint string
+	ExpiresAt   time.Time
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	RevokedAt   *time.Time
+}
+
+// AuthenticateParams captures the data required to authenticate a user.
+type AuthenticateParams struct {
+	Email       string
+	Password    string
+	Fingerprint string
+}
+
+// AuthenticateResult captures the outcome of a successful authentication attempt.
+type AuthenticateResult struct {
+	User    User
+	Session Session
+}
+
+// RefreshSessionParams captures the data required to refresh an existing session.
+type RefreshSessionParams struct {
+	Token       string
+	Fingerprint string
+}
+
+// RefreshSessionResult captures the outcome of rotating a session token.
+type RefreshSessionResult struct {
+	Session Session
+}
