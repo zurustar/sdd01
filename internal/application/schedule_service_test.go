@@ -452,3 +452,127 @@ func TestScheduleService_DeleteSchedule_AllowsAdministratorOverride(t *testing.T
 		t.Fatalf("expected admin delete to succeed, got %v", err)
 	}
 }
+
+func TestScheduleService_UpdateSchedule_ReturnsNotFoundWhenMissing(t *testing.T) {
+	t.Parallel()
+
+	repo := &scheduleRepoStub{}
+	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, func() time.Time { return mustJST(t, 9) })
+
+	_, err := svc.UpdateSchedule(context.Background(), UpdateScheduleParams{
+		Principal:  Principal{UserID: "user-1"},
+		ScheduleID: "missing", // repository will surface ErrNotFound for unknown ID
+		Input: ScheduleInput{
+			CreatorID:      "user-1",
+			Title:          "Design sync",
+			Start:          mustJST(t, 9),
+			End:            mustJST(t, 10),
+			ParticipantIDs: []string{"user-1"},
+		},
+	})
+
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound when schedule is missing, got %v", err)
+	}
+}
+
+func TestScheduleService_DeleteSchedule_ReturnsNotFoundWhenMissing(t *testing.T) {
+	t.Parallel()
+
+	repo := &scheduleRepoStub{}
+	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, nil)
+
+	err := svc.DeleteSchedule(context.Background(), Principal{UserID: "user-1"}, "missing")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound when schedule is missing, got %v", err)
+	}
+}
+
+func TestScheduleService_ListSchedules_FilteringAndOrdering(t *testing.T) {
+	t.Parallel()
+
+	t.Run("defaults to returning only the principal's schedules when no participant filter provided", func(t *testing.T) {
+		t.Parallel()
+		t.Skip("TODO: ensure ListSchedules restricts results to the authenticated principal when filter is empty")
+	})
+
+	t.Run("allows explicit participant filter to surface colleague schedules without leaking others", func(t *testing.T) {
+		t.Parallel()
+		t.Skip("TODO: assert ListSchedules returns only schedules for requested participant IDs")
+	})
+
+	t.Run("orders schedules chronologically and deterministically", func(t *testing.T) {
+		t.Parallel()
+		t.Skip("TODO: verify ListSchedules sorts by start time then stable identifier")
+	})
+
+	t.Run("expands recurrence hooks for requested period windows", func(t *testing.T) {
+		t.Parallel()
+		t.Skip("TODO: ensure ListSchedules leverages recurrence expansion for requested ranges")
+	})
+
+	t.Run("propagates detector warnings alongside successful results", func(t *testing.T) {
+		t.Parallel()
+		t.Skip("TODO: assert conflict warnings are returned even when schedules persist")
+	})
+}
+
+func TestScheduleService_ListSchedules_PeriodFilters(t *testing.T) {
+	t.Parallel()
+
+	t.Run("maps day/week/month presets into StartsAfter/EndsBefore filters", func(t *testing.T) {
+		t.Parallel()
+		t.Skip("TODO: ensure predefined period options translate to accurate interval filters")
+	})
+
+	t.Run("clips recurrence expansion to requested window", func(t *testing.T) {
+		t.Parallel()
+		t.Skip("TODO: verify recurring occurrences outside the window are excluded")
+	})
+}
+
+func TestScheduleService_CreateSchedule_EnforcesJapanStandardTime(t *testing.T) {
+	t.Parallel()
+
+	t.Run("rejects start times outside Asia/Tokyo", func(t *testing.T) {
+		t.Parallel()
+		t.Skip("TODO: ensure CreateSchedule validates times are provided in JST")
+	})
+
+	t.Run("rejects end times outside Asia/Tokyo", func(t *testing.T) {
+		t.Parallel()
+		t.Skip("TODO: ensure CreateSchedule enforces JST end times")
+	})
+}
+
+func TestScheduleService_UpdateSchedule_CleansUpRecurrences(t *testing.T) {
+	t.Parallel()
+
+	t.Run("removes obsolete recurrence rules when participants change", func(t *testing.T) {
+		t.Parallel()
+		t.Skip("TODO: ensure UpdateSchedule triggers recurrence cleanup when cadence shifts")
+	})
+
+	t.Run("maintains recurrence integrity when dates shift", func(t *testing.T) {
+		t.Parallel()
+		t.Skip("TODO: assert UpdateSchedule recalculates recurrence window bounds")
+	})
+}
+
+func TestScheduleService_DeleteSchedule_CleansUpRecurrences(t *testing.T) {
+	t.Parallel()
+
+	t.Run("removes recurrence definitions alongside the schedule", func(t *testing.T) {
+		t.Parallel()
+		t.Skip("TODO: ensure DeleteSchedule cascades recurrence removal")
+	})
+}
+
+func TestScheduleService_UpdateSchedule_PersistsDespiteWarnings(t *testing.T) {
+	t.Parallel()
+
+	t.Run("records updates even when detector emits warnings", func(t *testing.T) {
+		t.Parallel()
+		t.Skip("TODO: ensure UpdateSchedule returns warnings but still saves changes")
+	})
+}

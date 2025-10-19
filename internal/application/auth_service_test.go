@@ -29,6 +29,16 @@ func TestAuthService_Authenticate(t *testing.T) {
 		t.Parallel()
 		t.Skip("TODO: expect Authenticate to return ErrInvalidCredentials")
 	})
+
+	t.Run("propagates repository failures", func(t *testing.T) {
+		t.Parallel()
+		t.Skip("TODO: ensure repository errors bubble up without masking")
+	})
+
+	t.Run("records audit events for successful sign-ins", func(t *testing.T) {
+		t.Parallel()
+		t.Skip("TODO: assert Authenticate triggers audit logging hook")
+	})
 }
 
 func TestAuthService_RefreshSession(t *testing.T) {
@@ -42,5 +52,15 @@ func TestAuthService_RefreshSession(t *testing.T) {
 	t.Run("rejects expired sessions", func(t *testing.T) {
 		t.Parallel()
 		t.Skip("TODO: ensure RefreshSession refuses expired sessions")
+	})
+
+	t.Run("rejects revoked sessions", func(t *testing.T) {
+		t.Parallel()
+		t.Skip("TODO: ensure RefreshSession refuses explicitly revoked sessions")
+	})
+
+	t.Run("persists rotated session metadata", func(t *testing.T) {
+		t.Parallel()
+		t.Skip("TODO: assert RefreshSession updates expiry and fingerprints")
 	})
 }
