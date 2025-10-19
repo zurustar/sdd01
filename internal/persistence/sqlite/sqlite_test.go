@@ -2,6 +2,8 @@ package sqlite
 
 import (
 	"context"
+	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -48,6 +50,10 @@ func TestUserRepository(t *testing.T) {
 		t.Fatalf("CreateUser failed: %v", err)
 	}
 
+	if err := storage.CreateUser(ctx, user); !errors.Is(err, persistence.ErrDuplicate) {
+		t.Fatalf("expected ErrDuplicate on second insert, got %v", err)
+	}
+
 	fetched, err := storage.GetUser(ctx, user.ID)
 	if err != nil {
 		t.Fatalf("GetUser failed: %v", err)
@@ -84,7 +90,7 @@ func TestUserRepository(t *testing.T) {
 		t.Fatalf("DeleteUser failed: %v", err)
 	}
 
-	if err := storage.DeleteUser(ctx, user.ID); err != persistence.ErrNotFound {
+	if err := storage.DeleteUser(ctx, user.ID); !errors.Is(err, persistence.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 }
@@ -107,6 +113,13 @@ func TestRoomRepository(t *testing.T) {
 
 	if err := storage.CreateRoom(ctx, room); err != nil {
 		t.Fatalf("CreateRoom failed: %v", err)
+	}
+
+	invalidRoom := room
+	invalidRoom.ID = "room-invalid"
+	invalidRoom.Capacity = 0
+	if err := storage.CreateRoom(ctx, invalidRoom); !errors.Is(err, persistence.ErrConstraintViolation) {
+		t.Fatalf("expected ErrConstraintViolation for invalid capacity, got %v", err)
 	}
 
 	fetched, err := storage.GetRoom(ctx, room.ID)
@@ -136,7 +149,7 @@ func TestRoomRepository(t *testing.T) {
 		t.Fatalf("DeleteRoom failed: %v", err)
 	}
 
-	if err := storage.DeleteRoom(ctx, room.ID); err != persistence.ErrNotFound {
+	if err := storage.DeleteRoom(ctx, room.ID); !errors.Is(err, persistence.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound on second delete, got %v", err)
 	}
 }
@@ -240,21 +253,178 @@ func TestScheduleRepository(t *testing.T) {
 		t.Fatalf("DeleteSchedule failed: %v", err)
 	}
 
-	if _, err := storage.GetSchedule(ctx, schedule.ID); err != persistence.ErrNotFound {
+	if _, err := storage.GetSchedule(ctx, schedule.ID); !errors.Is(err, persistence.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound after delete, got %v", err)
+	}
+
+	invalid := schedule2
+	invalid.ID = "sched-invalid"
+	invalid.Start = invalid.End
+	if err := storage.CreateSchedule(ctx, invalid); !errors.Is(err, persistence.ErrConstraintViolation) {
+		t.Fatalf("expected ErrConstraintViolation for invalid times, got %v", err)
+	}
+
+	missingUser := schedule2
+	missingUser.ID = "sched-missing"
+	missingUser.CreatorID = "does-not-exist"
+	missingUser.Participants = []string{}
+	if err := storage.CreateSchedule(ctx, missingUser); !errors.Is(err, persistence.ErrForeignKeyViolation) {
+		t.Fatalf("expected ErrForeignKeyViolation for missing creator, got %v", err)
 	}
 }
 
 func TestStorage_normalizesDSNAndEnforcesForeignKeys(t *testing.T) {
-	t.Skip("TODO: assert Open normalizes DSN, enables PRAGMA foreign_keys, and rolls back on transaction failure")
+	ctx := context.Background()
+	dir := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get cwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("failed to chdir: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(cwd)
+	})
+
+	storage, err := Open("./scheduler.db")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	t.Cleanup(func() { _ = storage.Close() })
+
+	if err := storage.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate failed: %v", err)
+	}
+
+	absPath, err := normalizeDSN("./scheduler.db")
+	if err != nil {
+		t.Fatalf("normalizeDSN failed: %v", err)
+	}
+	if _, err := os.Stat(absPath); err != nil {
+		t.Fatalf("expected database file at %s: %v", absPath, err)
+	}
+
+	now := time.Now().UTC()
+	invalidSchedule := persistence.Schedule{
+		ID:        "fk-test",
+		Title:     "Invalid",
+		Start:     now,
+		End:       now.Add(time.Hour),
+		CreatorID: "missing",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := storage.CreateSchedule(ctx, invalidSchedule); !errors.Is(err, persistence.ErrForeignKeyViolation) {
+		t.Fatalf("expected ErrForeignKeyViolation, got %v", err)
+	}
+
 }
 
 func TestStorage_timestampsRoundTripRFC3339Nano(t *testing.T) {
-	t.Skip("TODO: ensure timestamp columns round-trip using time.RFC3339Nano in UTC")
+	ctx := context.Background()
+	storage := newTestStorage(t)
+
+	precise := time.Date(2024, time.January, 2, 3, 4, 5, 987654321, time.UTC)
+	user := persistence.User{
+		ID:          "ts-user",
+		Email:       "precision@example.com",
+		DisplayName: "Precision",
+		CreatedAt:   precise,
+		UpdatedAt:   precise,
+	}
+	if err := storage.CreateUser(ctx, user); err != nil {
+		t.Fatalf("CreateUser failed: %v", err)
+	}
+	fetchedUser, err := storage.GetUser(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("GetUser failed: %v", err)
+	}
+	if !fetchedUser.CreatedAt.Equal(precise) || !fetchedUser.UpdatedAt.Equal(precise) {
+		t.Fatalf("expected timestamps to round-trip exactly, got %#v", fetchedUser)
+	}
+
+	start := precise.Add(2*time.Hour + 45*time.Minute)
+	end := start.Add(time.Hour + time.Nanosecond)
+	schedule := persistence.Schedule{
+		ID:        "ts-schedule",
+		Title:     "Precision Meeting",
+		Start:     start,
+		End:       end,
+		CreatorID: user.ID,
+		Participants: []string{
+			user.ID,
+		},
+		CreatedAt: precise,
+		UpdatedAt: precise,
+	}
+	if err := storage.CreateSchedule(ctx, schedule); err != nil {
+		t.Fatalf("CreateSchedule failed: %v", err)
+	}
+	fetchedSchedule, err := storage.GetSchedule(ctx, schedule.ID)
+	if err != nil {
+		t.Fatalf("GetSchedule failed: %v", err)
+	}
+	if !fetchedSchedule.Start.Equal(start) || !fetchedSchedule.End.Equal(end) {
+		t.Fatalf("expected schedule times to round-trip, got %#v", fetchedSchedule)
+	}
+	if !fetchedSchedule.CreatedAt.Equal(precise) || !fetchedSchedule.UpdatedAt.Equal(precise) {
+		t.Fatalf("expected metadata timestamps to round-trip, got %#v", fetchedSchedule)
+	}
 }
 
 func TestStorage_weekdayBitmaskRoundTrip(t *testing.T) {
-	t.Skip("TODO: ensure weekday bitmask encoding faithfully converts to []time.Weekday")
+	ctx := context.Background()
+	storage := newTestStorage(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	user := persistence.User{ID: "weekday-user", Email: "weekday@example.com", DisplayName: "Weekday", CreatedAt: now, UpdatedAt: now}
+	if err := storage.CreateUser(ctx, user); err != nil {
+		t.Fatalf("failed to seed user: %v", err)
+	}
+	schedule := persistence.Schedule{
+		ID:           "weekday-schedule",
+		Title:        "Weekly",
+		Start:        now,
+		End:          now.Add(time.Hour),
+		CreatorID:    user.ID,
+		Participants: []string{user.ID},
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	if err := storage.CreateSchedule(ctx, schedule); err != nil {
+		t.Fatalf("failed to create schedule: %v", err)
+	}
+
+	rule := persistence.RecurrenceRule{
+		ID:         "weekday-rule",
+		ScheduleID: schedule.ID,
+		Frequency:  1,
+		Weekdays:   []time.Weekday{time.Monday, time.Wednesday, time.Friday},
+		StartsOn:   now,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+	if err := storage.UpsertRecurrence(ctx, rule); err != nil {
+		t.Fatalf("UpsertRecurrence failed: %v", err)
+	}
+	rules, err := storage.ListRecurrencesForSchedule(ctx, schedule.ID)
+	if err != nil {
+		t.Fatalf("ListRecurrencesForSchedule failed: %v", err)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 recurrence, got %d", len(rules))
+	}
+	retrieved := rules[0]
+	if len(retrieved.Weekdays) != 3 {
+		t.Fatalf("expected 3 weekdays, got %#v", retrieved.Weekdays)
+	}
+	expected := []time.Weekday{time.Monday, time.Wednesday, time.Friday}
+	for i, day := range expected {
+		if retrieved.Weekdays[i] != day {
+			t.Fatalf("weekday mismatch at %d: want %v got %v", i, day, retrieved.Weekdays[i])
+		}
+	}
 }
 
 func TestRecurrenceRepository(t *testing.T) {
@@ -330,7 +500,7 @@ func TestRecurrenceRepository(t *testing.T) {
 		t.Fatalf("DeleteRecurrence failed: %v", err)
 	}
 
-	if err := storage.DeleteRecurrence(ctx, rule.ID); err != persistence.ErrNotFound {
+	if err := storage.DeleteRecurrence(ctx, rule.ID); !errors.Is(err, persistence.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound on deleting missing recurrence, got %v", err)
 	}
 
