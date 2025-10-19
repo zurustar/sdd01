@@ -382,6 +382,40 @@ func TestScheduleService_CreateSchedule_ReturnsConflictWarnings(t *testing.T) {
 	}
 }
 
+func TestScheduleService_CreateSchedule_PersistsWhenConflictListMissing(t *testing.T) {
+	t.Parallel()
+
+	repo := &scheduleRepoStub{listErr: ErrNotFound}
+	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, func() string { return "schedule-new" }, func() time.Time { return mustJST(t, 9) })
+
+	created, warnings, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
+		Principal: Principal{UserID: "user-1"},
+		Input: ScheduleInput{
+			CreatorID:      "user-1",
+			Title:          "Planning meeting",
+			Start:          mustJST(t, 10),
+			End:            mustJST(t, 11),
+			ParticipantIDs: []string{"user-1"},
+		},
+	})
+
+	if err != nil {
+		t.Fatalf("expected success when conflict list missing, got %v", err)
+	}
+
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings when repository reports no existing schedules, got %v", warnings)
+	}
+
+	if repo.created.ID == "" {
+		t.Fatalf("expected schedule to be persisted when detector list is missing")
+	}
+
+	if created.ID == "" {
+		t.Fatalf("expected created schedule to include identifier")
+	}
+}
+
 func TestScheduleService_UpdateSchedule_ValidatesCreatorImmutability(t *testing.T) {
 	t.Parallel()
 
@@ -723,6 +757,12 @@ func TestScheduleService_UpdateSchedule_PersistsDespiteWarnings(t *testing.T) {
 
 	if !foundParticipantWarning {
 		t.Fatalf("expected participant warning referencing schedule-2, got %v", warnings)
+	}
+
+	for _, warning := range warnings {
+		if warning.ScheduleID == "schedule-1" {
+			t.Fatalf("expected detector to ignore the schedule being updated, got warning %v", warning)
+		}
 	}
 
 	if repo.updated.Title != "Updated title" {
