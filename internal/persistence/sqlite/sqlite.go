@@ -91,6 +91,10 @@ func (s *Storage) CreateUser(ctx context.Context, user persistence.User) error {
 		return persistence.ErrDuplicate
 	}
 
+	if user.PasswordHash == "" {
+		return persistence.ErrConstraintViolation
+	}
+
 	user.CreatedAt = user.CreatedAt.UTC()
 	user.UpdatedAt = user.UpdatedAt.UTC()
 	s.users[user.ID] = user
@@ -115,6 +119,10 @@ func (s *Storage) UpdateUser(ctx context.Context, user persistence.User) error {
 
 	if current.Email != user.Email {
 		delete(s.userByEmail, normalizeEmail(current.Email))
+	}
+
+	if user.PasswordHash == "" {
+		return persistence.ErrConstraintViolation
 	}
 
 	user.CreatedAt = current.CreatedAt
@@ -489,34 +497,34 @@ func (s *Storage) DeleteRecurrencesForSchedule(ctx context.Context, scheduleID s
 }
 
 // CreateSession stores a new session token for a user.
-func (s *Storage) CreateSession(ctx context.Context, session persistence.Session) error {
+func (s *Storage) CreateSession(ctx context.Context, session persistence.Session) (persistence.Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if session.ID == "" {
-		return persistence.ErrConstraintViolation
+		return persistence.Session{}, persistence.ErrConstraintViolation
 	}
 	if _, exists := s.sessions[session.ID]; exists {
-		return persistence.ErrDuplicate
+		return persistence.Session{}, persistence.ErrDuplicate
 	}
 	if session.UserID == "" {
-		return persistence.ErrConstraintViolation
+		return persistence.Session{}, persistence.ErrConstraintViolation
 	}
 	if _, ok := s.users[session.UserID]; !ok {
-		return persistence.ErrForeignKeyViolation
+		return persistence.Session{}, persistence.ErrForeignKeyViolation
 	}
 
 	normalized, err := normalizeSession(session)
 	if err != nil {
-		return err
+		return persistence.Session{}, err
 	}
 	if existingID, ok := s.sessionByToken[normalized.Token]; ok && existingID != normalized.ID {
-		return persistence.ErrDuplicate
+		return persistence.Session{}, persistence.ErrDuplicate
 	}
 
 	s.sessions[normalized.ID] = normalized
 	s.sessionByToken[normalized.Token] = normalized.ID
-	return nil
+	return cloneSession(normalized), nil
 }
 
 // GetSession retrieves a session by its token value.
@@ -537,13 +545,13 @@ func (s *Storage) GetSession(ctx context.Context, token string) (persistence.Ses
 }
 
 // UpdateSession updates mutable fields of an existing session.
-func (s *Storage) UpdateSession(ctx context.Context, session persistence.Session) error {
+func (s *Storage) UpdateSession(ctx context.Context, session persistence.Session) (persistence.Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	current, ok := s.sessions[session.ID]
 	if !ok {
-		return persistence.ErrNotFound
+		return persistence.Session{}, persistence.ErrNotFound
 	}
 
 	session.ID = current.ID
@@ -552,11 +560,11 @@ func (s *Storage) UpdateSession(ctx context.Context, session persistence.Session
 
 	normalized, err := normalizeSession(session)
 	if err != nil {
-		return err
+		return persistence.Session{}, err
 	}
 
 	if existingID, ok := s.sessionByToken[normalized.Token]; ok && existingID != normalized.ID {
-		return persistence.ErrDuplicate
+		return persistence.Session{}, persistence.ErrDuplicate
 	}
 
 	if currentToken := strings.TrimSpace(current.Token); currentToken != normalized.Token {
@@ -565,6 +573,54 @@ func (s *Storage) UpdateSession(ctx context.Context, session persistence.Session
 
 	s.sessions[normalized.ID] = normalized
 	s.sessionByToken[normalized.Token] = normalized.ID
+	return cloneSession(normalized), nil
+}
+
+// RevokeSession marks a session as revoked based on its token value.
+func (s *Storage) RevokeSession(ctx context.Context, token string, revokedAt time.Time) (persistence.Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	normalizedToken := strings.TrimSpace(token)
+	if normalizedToken == "" {
+		return persistence.Session{}, persistence.ErrNotFound
+	}
+
+	id, ok := s.sessionByToken[normalizedToken]
+	if !ok {
+		return persistence.Session{}, persistence.ErrNotFound
+	}
+
+	session := s.sessions[id]
+	revoked := revokedAt.UTC()
+	session.RevokedAt = &revoked
+	session.UpdatedAt = revoked
+
+	normalized, err := normalizeSession(session)
+	if err != nil {
+		return persistence.Session{}, err
+	}
+
+	s.sessions[normalized.ID] = normalized
+	s.sessionByToken[normalized.Token] = normalized.ID
+	return cloneSession(normalized), nil
+}
+
+// DeleteExpiredSessions removes sessions that expired on or before the provided timestamp.
+func (s *Storage) DeleteExpiredSessions(ctx context.Context, reference time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cutoff := reference.UTC()
+	for id, session := range s.sessions {
+		if session.ExpiresAt.IsZero() {
+			continue
+		}
+		if !session.ExpiresAt.After(cutoff) {
+			delete(s.sessions, id)
+			delete(s.sessionByToken, strings.TrimSpace(session.Token))
+		}
+	}
 	return nil
 }
 

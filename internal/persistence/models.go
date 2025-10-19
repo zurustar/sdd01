@@ -4,12 +4,13 @@ import "time"
 
 // User represents an employee account in the scheduler domain.
 type User struct {
-	ID          string
-	Email       string
-	DisplayName string
-	IsAdmin     bool
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID           string
+	Email        string
+	DisplayName  string
+	PasswordHash string
+	IsAdmin      bool
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // Room represents a meeting room catalog entry.

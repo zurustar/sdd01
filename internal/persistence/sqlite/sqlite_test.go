@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,12 +40,13 @@ func TestUserRepository(t *testing.T) {
 
 	now := time.Now().UTC().Truncate(time.Second)
 	user := persistence.User{
-		ID:          "user-1",
-		Email:       "alice@example.com",
-		DisplayName: "Alice",
-		IsAdmin:     true,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:           "user-1",
+		Email:        "alice@example.com",
+		DisplayName:  "Alice",
+		PasswordHash: "hash",
+		IsAdmin:      true,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 
 	if err := storage.CreateUser(ctx, user); err != nil {
@@ -59,7 +62,7 @@ func TestUserRepository(t *testing.T) {
 		t.Fatalf("GetUser failed: %v", err)
 	}
 
-	if fetched.Email != user.Email || !fetched.IsAdmin {
+	if fetched.Email != user.Email || !fetched.IsAdmin || fetched.PasswordHash != user.PasswordHash {
 		t.Fatalf("unexpected user retrieved: %#v", fetched)
 	}
 
@@ -74,7 +77,7 @@ func TestUserRepository(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserByEmail failed: %v", err)
 	}
-	if fetched.DisplayName != "Alice Updated" || fetched.IsAdmin {
+	if fetched.DisplayName != "Alice Updated" || fetched.IsAdmin || fetched.PasswordHash != user.PasswordHash {
 		t.Fatalf("unexpected user after update: %#v", fetched)
 	}
 
@@ -161,8 +164,8 @@ func TestScheduleRepository(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 
 	// Seed users required by foreign keys.
-	creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", CreatedAt: now, UpdatedAt: now}
-	attendee := persistence.User{ID: "attendee", Email: "attendee@example.com", DisplayName: "Attendee", CreatedAt: now, UpdatedAt: now}
+	creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now}
+	attendee := persistence.User{ID: "attendee", Email: "attendee@example.com", DisplayName: "Attendee", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now}
 	if err := storage.CreateUser(ctx, creator); err != nil {
 		t.Fatalf("failed to seed creator: %v", err)
 	}
@@ -327,11 +330,12 @@ func TestStorage_timestampsRoundTripRFC3339Nano(t *testing.T) {
 
 	precise := time.Date(2024, time.January, 2, 3, 4, 5, 987654321, time.UTC)
 	user := persistence.User{
-		ID:          "ts-user",
-		Email:       "precision@example.com",
-		DisplayName: "Precision",
-		CreatedAt:   precise,
-		UpdatedAt:   precise,
+		ID:           "ts-user",
+		Email:        "precision@example.com",
+		DisplayName:  "Precision",
+		PasswordHash: "hash",
+		CreatedAt:    precise,
+		UpdatedAt:    precise,
 	}
 	if err := storage.CreateUser(ctx, user); err != nil {
 		t.Fatalf("CreateUser failed: %v", err)
@@ -378,7 +382,7 @@ func TestStorage_weekdayBitmaskRoundTrip(t *testing.T) {
 	storage := newTestStorage(t)
 
 	now := time.Now().UTC().Truncate(time.Second)
-	user := persistence.User{ID: "weekday-user", Email: "weekday@example.com", DisplayName: "Weekday", CreatedAt: now, UpdatedAt: now}
+	user := persistence.User{ID: "weekday-user", Email: "weekday@example.com", DisplayName: "Weekday", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now}
 	if err := storage.CreateUser(ctx, user); err != nil {
 		t.Fatalf("failed to seed user: %v", err)
 	}
@@ -433,7 +437,7 @@ func TestRecurrenceRepository(t *testing.T) {
 
 	now := time.Now().UTC().Truncate(time.Second)
 
-	creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", CreatedAt: now, UpdatedAt: now}
+	creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now}
 	if err := storage.CreateUser(ctx, creator); err != nil {
 		t.Fatalf("failed to seed creator: %v", err)
 	}
@@ -518,5 +522,29 @@ func TestRecurrenceRepository(t *testing.T) {
 	}
 	if len(rules) != 0 {
 		t.Fatalf("expected no recurrence rules after delete all, got %#v", rules)
+	}
+}
+
+func TestSchemaIncludesSessionsTable(t *testing.T) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller returned false")
+	}
+
+	path := filepath.Join(filepath.Dir(filename), "schema.sql")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read schema.sql: %v", err)
+	}
+
+	contents := string(data)
+	if !strings.Contains(contents, "CREATE TABLE IF NOT EXISTS sessions") {
+		t.Fatalf("schema.sql missing sessions table definition")
+	}
+	if !strings.Contains(contents, "idx_sessions_expires_at") {
+		t.Fatalf("schema.sql missing sessions expiry index")
+	}
+	if !strings.Contains(contents, "idx_sessions_user_id") {
+		t.Fatalf("schema.sql missing sessions user index")
 	}
 }
