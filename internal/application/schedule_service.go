@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -38,17 +39,23 @@ type RoomCatalog interface {
 	RoomExists(ctx context.Context, id string) (bool, error)
 }
 
+// RecurrenceRepository exposes recurrence cleanup operations.
+type RecurrenceRepository interface {
+	DeleteRecurrencesForSchedule(ctx context.Context, scheduleID string) error
+}
+
 // ScheduleService orchestrates validation and persistence for schedule operations.
 type ScheduleService struct {
 	schedules   ScheduleRepository
 	users       UserDirectory
 	rooms       RoomCatalog
+	recurrences RecurrenceRepository
 	idGenerator func() string
 	now         func() time.Time
 }
 
 // NewScheduleService wires dependencies for schedule operations.
-func NewScheduleService(schedules ScheduleRepository, users UserDirectory, rooms RoomCatalog, idGenerator func() string, now func() time.Time) *ScheduleService {
+func NewScheduleService(schedules ScheduleRepository, users UserDirectory, rooms RoomCatalog, recurrences RecurrenceRepository, idGenerator func() string, now func() time.Time) *ScheduleService {
 	if idGenerator == nil {
 		idGenerator = func() string { return "" }
 	}
@@ -59,6 +66,7 @@ func NewScheduleService(schedules ScheduleRepository, users UserDirectory, rooms
 		schedules:   schedules,
 		users:       users,
 		rooms:       rooms,
+		recurrences: recurrences,
 		idGenerator: idGenerator,
 		now:         now,
 	}
@@ -190,6 +198,8 @@ func (s *ScheduleService) UpdateSchedule(ctx context.Context, params UpdateSched
 	updated.ParticipantIDs = sortStrings(uniqueStrings(input.ParticipantIDs))
 	updated.UpdatedAt = s.now()
 
+	cleanupNeeded := needsRecurrenceCleanup(existing, updated)
+
 	warnings, err := s.detectConflicts(ctx, updated)
 	if err != nil {
 		return Schedule{}, nil, err
@@ -198,6 +208,12 @@ func (s *ScheduleService) UpdateSchedule(ctx context.Context, params UpdateSched
 	persisted, err := s.schedules.UpdateSchedule(ctx, updated)
 	if err != nil {
 		return Schedule{}, nil, err
+	}
+
+	if cleanupNeeded && s.recurrences != nil {
+		if err := s.recurrences.DeleteRecurrencesForSchedule(ctx, persisted.ID); err != nil {
+			return Schedule{}, nil, err
+		}
 	}
 
 	return persisted, warnings, nil
@@ -224,7 +240,20 @@ func (s *ScheduleService) DeleteSchedule(ctx context.Context, principal Principa
 		return ErrUnauthorized
 	}
 
-	return s.schedules.DeleteSchedule(ctx, scheduleID)
+	if err := s.schedules.DeleteSchedule(ctx, scheduleID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return ErrNotFound
+		}
+		return err
+	}
+
+	if s.recurrences != nil {
+		if err := s.recurrences.DeleteRecurrencesForSchedule(ctx, scheduleID); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // ListSchedules enumerates schedules visible to the requesting principal.
@@ -397,6 +426,20 @@ func uniqueStrings(values []string) []string {
 		result = append(result, value)
 	}
 	return result
+}
+
+func needsRecurrenceCleanup(before, after Schedule) bool {
+	if !before.Start.Equal(after.Start) || !before.End.Equal(after.End) {
+		return true
+	}
+
+	beforeParticipants := sortStrings(before.ParticipantIDs)
+	afterParticipants := sortStrings(after.ParticipantIDs)
+	if !slices.Equal(beforeParticipants, afterParticipants) {
+		return true
+	}
+
+	return false
 }
 
 func sortStrings(values []string) []string {
