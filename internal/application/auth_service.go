@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 )
@@ -34,10 +35,16 @@ type AuthService struct {
 	tokenGenerator func() string
 	now            func() time.Time
 	sessionTTL     time.Duration
+	logger         *slog.Logger
 }
 
 // NewAuthService constructs an AuthService with the provided dependencies.
 func NewAuthService(credentials CredentialStore, sessions SessionRepository, verify PasswordVerifier, tokenGenerator func() string, now func() time.Time, sessionTTL time.Duration) *AuthService {
+	return NewAuthServiceWithLogger(credentials, sessions, verify, tokenGenerator, now, sessionTTL, nil)
+}
+
+// NewAuthServiceWithLogger constructs an AuthService with a specified logger.
+func NewAuthServiceWithLogger(credentials CredentialStore, sessions SessionRepository, verify PasswordVerifier, tokenGenerator func() string, now func() time.Time, sessionTTL time.Duration, logger *slog.Logger) *AuthService {
 	if verify == nil {
 		verify = func(hashedPassword, password string) error {
 			if hashedPassword == "" || password == "" {
@@ -65,39 +72,65 @@ func NewAuthService(credentials CredentialStore, sessions SessionRepository, ver
 		tokenGenerator: tokenGenerator,
 		now:            now,
 		sessionTTL:     sessionTTL,
+		logger:         defaultLogger(logger),
 	}
 }
 
+func (s *AuthService) loggerWith(ctx context.Context, operation string, attrs ...any) *slog.Logger {
+	return serviceLogger(ctx, s.logger, "AuthService", operation, attrs...)
+}
+
 // Authenticate validates credentials and issues a new session token.
-func (s *AuthService) Authenticate(ctx context.Context, params AuthenticateParams) (AuthenticateResult, error) {
+func (s *AuthService) Authenticate(ctx context.Context, params AuthenticateParams) (result AuthenticateResult, err error) {
 	if s == nil {
-		return AuthenticateResult{}, fmt.Errorf("AuthService is nil")
+		err = fmt.Errorf("AuthService is nil")
+		return
 	}
 	if s.credentials == nil {
-		return AuthenticateResult{}, fmt.Errorf("credential store not configured")
+		err = fmt.Errorf("credential store not configured")
+		return
 	}
 
 	email := strings.TrimSpace(strings.ToLower(params.Email))
 	password := params.Password
 
+	logger := s.loggerWith(ctx, "Authenticate",
+		"email", email,
+	)
+	defer func() {
+		if err != nil {
+			logger.ErrorContext(ctx, "authentication failed", "error", err, "error_kind", ErrorKind(err))
+			return
+		}
+		logger.With(
+			"user_id", result.User.ID,
+			"session_id", result.Session.ID,
+		).InfoContext(ctx, "authentication succeeded")
+	}()
+
 	if email == "" || password == "" {
-		return AuthenticateResult{}, ErrInvalidCredentials
+		err = ErrInvalidCredentials
+		return
 	}
 
-	creds, err := s.credentials.GetUserCredentialsByEmail(ctx, email)
+	var creds UserCredentials
+	creds, err = s.credentials.GetUserCredentialsByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			return AuthenticateResult{}, ErrInvalidCredentials
+			err = ErrInvalidCredentials
+			return
 		}
-		return AuthenticateResult{}, err
+		return
 	}
 
 	if creds.Disabled {
-		return AuthenticateResult{}, ErrAccountDisabled
+		err = ErrAccountDisabled
+		return
 	}
 
-	if err := s.verifyPassword(creds.PasswordHash, password); err != nil {
-		return AuthenticateResult{}, ErrInvalidCredentials
+	if err = s.verifyPassword(creds.PasswordHash, password); err != nil {
+		err = ErrInvalidCredentials
+		return
 	}
 
 	now := s.now()
@@ -118,48 +151,71 @@ func (s *AuthService) Authenticate(ctx context.Context, params AuthenticateParam
 	}
 
 	if s.sessions != nil {
-		if err := s.sessions.DeleteExpiredSessions(ctx, now); err != nil {
-			return AuthenticateResult{}, err
+		if err = s.sessions.DeleteExpiredSessions(ctx, now); err != nil {
+			return
 		}
 
-		persisted, err := s.sessions.CreateSession(ctx, session)
+		var persisted Session
+		persisted, err = s.sessions.CreateSession(ctx, session)
 		if err != nil {
-			return AuthenticateResult{}, err
+			return
 		}
 		session = persisted
 	}
 
-	return AuthenticateResult{User: creds.User, Session: session}, nil
+	result = AuthenticateResult{User: creds.User, Session: session}
+	return
 }
 
 // RefreshSession rotates an existing session token, extending its validity window.
-func (s *AuthService) RefreshSession(ctx context.Context, params RefreshSessionParams) (RefreshSessionResult, error) {
+func (s *AuthService) RefreshSession(ctx context.Context, params RefreshSessionParams) (result RefreshSessionResult, err error) {
 	if s == nil {
-		return RefreshSessionResult{}, fmt.Errorf("AuthService is nil")
+		err = fmt.Errorf("AuthService is nil")
+		return
 	}
 	if s.sessions == nil {
-		return RefreshSessionResult{}, fmt.Errorf("session repository not configured")
+		err = fmt.Errorf("session repository not configured")
+		return
 	}
 
 	token := strings.TrimSpace(params.Token)
+	logger := s.loggerWith(ctx, "RefreshSession",
+		"token_provided", token != "",
+	)
+	defer func() {
+		if err != nil {
+			logger.ErrorContext(ctx, "session refresh failed", "error", err, "error_kind", ErrorKind(err))
+			return
+		}
+		logger.With(
+			"session_id", result.Session.ID,
+			"user_id", result.Session.UserID,
+		).InfoContext(ctx, "session refreshed")
+	}()
+
 	if token == "" {
-		return RefreshSessionResult{}, ErrInvalidCredentials
+		err = ErrInvalidCredentials
+		return
 	}
 
-	session, err := s.sessions.GetSession(ctx, token)
+	var session Session
+	session, err = s.sessions.GetSession(ctx, token)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			return RefreshSessionResult{}, ErrInvalidCredentials
+			err = ErrInvalidCredentials
+			return
 		}
-		return RefreshSessionResult{}, err
+		return
 	}
 
 	now := s.now()
 	if session.RevokedAt != nil && !session.RevokedAt.IsZero() {
-		return RefreshSessionResult{}, ErrSessionRevoked
+		err = ErrSessionRevoked
+		return
 	}
 	if !session.ExpiresAt.IsZero() && !session.ExpiresAt.After(now) {
-		return RefreshSessionResult{}, ErrSessionExpired
+		err = ErrSessionExpired
+		return
 	}
 
 	newToken := s.tokenGenerator()
@@ -174,12 +230,13 @@ func (s *AuthService) RefreshSession(ctx context.Context, params RefreshSessionP
 		session.Fingerprint = fp
 	}
 
-	persisted, err := s.sessions.UpdateSession(ctx, session)
+	session, err = s.sessions.UpdateSession(ctx, session)
 	if err != nil {
-		return RefreshSessionResult{}, err
+		return
 	}
 
-	return RefreshSessionResult{Session: persisted}, nil
+	result = RefreshSessionResult{Session: session}
+	return
 }
 
 // RevokeSession invalidates an existing session token.
@@ -196,15 +253,21 @@ func (s *AuthService) RevokeSession(ctx context.Context, token string) error {
 		return ErrInvalidCredentials
 	}
 
+	logger := s.loggerWith(ctx, "RevokeSession", "token_provided", trimmed != "")
+
 	if _, err := s.sessions.RevokeSession(ctx, trimmed, s.now()); err != nil {
 		if errors.Is(err, ErrNotFound) {
+			logger.ErrorContext(ctx, "failed to revoke session", "error", ErrInvalidCredentials, "error_kind", ErrorKind(ErrInvalidCredentials))
 			return ErrInvalidCredentials
 		}
+		logger.ErrorContext(ctx, "failed to revoke session", "error", err, "error_kind", ErrorKind(err))
 		return err
 	}
 
 	if err := s.sessions.DeleteExpiredSessions(ctx, s.now()); err != nil {
+		logger.ErrorContext(ctx, "failed to prune expired sessions", "error", err, "error_kind", ErrorKind(err))
 		return err
 	}
+	logger.InfoContext(ctx, "session revoked")
 	return nil
 }

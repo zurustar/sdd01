@@ -21,10 +21,19 @@ type userService interface {
 type UserHandler struct {
 	service   userService
 	responder responder
+	logger    *slog.Logger
 }
 
 func NewUserHandler(service userService, logger *slog.Logger) *UserHandler {
-	return &UserHandler{service: service, responder: newResponder(logger)}
+	base := defaultLogger(logger)
+	return &UserHandler{service: service, responder: newResponder(base), logger: base}
+}
+
+func (h *UserHandler) log(ctx context.Context, operation string, attrs ...any) *slog.Logger {
+	if h == nil {
+		return slog.Default()
+	}
+	return handlerLogger(ctx, h.logger, "UserHandler", operation, attrs...)
 }
 
 func (h *UserHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -37,19 +46,24 @@ func (h *UserHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	var req userRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.log(r.Context(), "Create", "principal_id", principal.UserID, "error_kind", "bad_request").ErrorContext(r.Context(), "failed to decode user request", "error", err)
 		h.responder.writeError(r.Context(), w, http.StatusBadRequest, errBadRequestBody)
 		return
 	}
+
+	logger := h.log(r.Context(), "Create", "principal_id", principal.UserID)
 
 	user, err := h.service.CreateUser(r.Context(), application.CreateUserParams{
 		Principal: principal,
 		Input:     req.toInput(),
 	})
 	if err != nil {
+		logger.ErrorContext(r.Context(), "user creation failed", "error", err, "error_kind", application.ErrorKind(err))
 		h.responder.handleServiceError(r.Context(), w, err)
 		return
 	}
 
+	logger.With("user_id", user.ID).InfoContext(r.Context(), "user created")
 	h.responder.writeJSON(r.Context(), w, http.StatusCreated, userResponse{User: toUserDTO(user)})
 }
 
@@ -61,6 +75,7 @@ func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	userID, ok := UserIDFromContext(r.Context())
 	if !ok || strings.TrimSpace(userID) == "" {
+		h.log(r.Context(), "Update", "error_kind", "bad_request").ErrorContext(r.Context(), "missing user id for update")
 		h.responder.writeError(r.Context(), w, http.StatusBadRequest, errInvalidUserID)
 		return
 	}
@@ -69,9 +84,12 @@ func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	var req userRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.log(r.Context(), "Update", "principal_id", principal.UserID, "user_id", userID, "error_kind", "bad_request").ErrorContext(r.Context(), "failed to decode user update", "error", err)
 		h.responder.writeError(r.Context(), w, http.StatusBadRequest, errBadRequestBody)
 		return
 	}
+
+	logger := h.log(r.Context(), "Update", "principal_id", principal.UserID, "user_id", userID)
 
 	user, err := h.service.UpdateUser(r.Context(), application.UpdateUserParams{
 		Principal: principal,
@@ -79,10 +97,12 @@ func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Input:     req.toInput(),
 	})
 	if err != nil {
+		logger.ErrorContext(r.Context(), "user update failed", "error", err, "error_kind", application.ErrorKind(err))
 		h.responder.handleServiceError(r.Context(), w, err)
 		return
 	}
 
+	logger.InfoContext(r.Context(), "user updated")
 	h.responder.writeJSON(r.Context(), w, http.StatusOK, userResponse{User: toUserDTO(user)})
 }
 
@@ -94,16 +114,20 @@ func (h *UserHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	userID, ok := UserIDFromContext(r.Context())
 	if !ok || strings.TrimSpace(userID) == "" {
+		h.log(r.Context(), "Delete", "error_kind", "bad_request").ErrorContext(r.Context(), "missing user id for delete")
 		h.responder.writeError(r.Context(), w, http.StatusBadRequest, errInvalidUserID)
 		return
 	}
 
 	principal, _ := PrincipalFromContext(r.Context())
+	logger := h.log(r.Context(), "Delete", "principal_id", principal.UserID, "user_id", userID)
 	if err := h.service.DeleteUser(r.Context(), principal, userID); err != nil {
+		logger.ErrorContext(r.Context(), "user delete failed", "error", err, "error_kind", application.ErrorKind(err))
 		h.responder.handleServiceError(r.Context(), w, err)
 		return
 	}
 
+	logger.InfoContext(r.Context(), "user deleted")
 	h.responder.writeJSON(r.Context(), w, http.StatusNoContent, nil)
 }
 
@@ -114,12 +138,15 @@ func (h *UserHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	principal, _ := PrincipalFromContext(r.Context())
+	logger := h.log(r.Context(), "List", "principal_id", principal.UserID)
 	users, err := h.service.ListUsers(r.Context(), principal)
 	if err != nil {
+		logger.ErrorContext(r.Context(), "user list failed", "error", err, "error_kind", application.ErrorKind(err))
 		h.responder.handleServiceError(r.Context(), w, err)
 		return
 	}
 
+	logger.With("result_count", len(users)).InfoContext(r.Context(), "users listed")
 	h.responder.writeJSON(r.Context(), w, http.StatusOK, listUsersResponse{Users: toUserDTOs(users)})
 }
 

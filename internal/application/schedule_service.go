@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"slices"
 	"sort"
@@ -53,10 +54,16 @@ type ScheduleService struct {
 	recurrences RecurrenceRepository
 	idGenerator func() string
 	now         func() time.Time
+	logger      *slog.Logger
 }
 
 // NewScheduleService wires dependencies for schedule operations.
 func NewScheduleService(schedules ScheduleRepository, users UserDirectory, rooms RoomCatalog, recurrences RecurrenceRepository, idGenerator func() string, now func() time.Time) *ScheduleService {
+	return NewScheduleServiceWithLogger(schedules, users, rooms, recurrences, idGenerator, now, nil)
+}
+
+// NewScheduleServiceWithLogger wires dependencies and allows specifying a logger.
+func NewScheduleServiceWithLogger(schedules ScheduleRepository, users UserDirectory, rooms RoomCatalog, recurrences RecurrenceRepository, idGenerator func() string, now func() time.Time, logger *slog.Logger) *ScheduleService {
 	if idGenerator == nil {
 		idGenerator = func() string { return "" }
 	}
@@ -70,13 +77,19 @@ func NewScheduleService(schedules ScheduleRepository, users UserDirectory, rooms
 		recurrences: recurrences,
 		idGenerator: idGenerator,
 		now:         now,
+		logger:      defaultLogger(logger),
 	}
 }
 
+func (s *ScheduleService) loggerWith(ctx context.Context, operation string, attrs ...any) *slog.Logger {
+	return serviceLogger(ctx, s.logger, "ScheduleService", operation, attrs...)
+}
+
 // CreateSchedule validates the request before delegating to persistence.
-func (s *ScheduleService) CreateSchedule(ctx context.Context, params CreateScheduleParams) (Schedule, []ConflictWarning, error) {
+func (s *ScheduleService) CreateSchedule(ctx context.Context, params CreateScheduleParams) (schedule Schedule, warnings []ConflictWarning, err error) {
 	if s == nil {
-		return Schedule{}, nil, fmt.Errorf("ScheduleService is nil")
+		err = fmt.Errorf("ScheduleService is nil")
+		return
 	}
 	input := params.Input
 	principal := params.Principal
@@ -85,32 +98,43 @@ func (s *ScheduleService) CreateSchedule(ctx context.Context, params CreateSched
 		input.CreatorID = principal.UserID
 	}
 
+	logger := s.loggerWith(ctx, "CreateSchedule",
+		"principal_id", principal.UserID,
+		"creator_id", input.CreatorID,
+	)
+	defer func() {
+		if err != nil {
+			logger.ErrorContext(ctx, "failed to create schedule", "error", err, "error_kind", ErrorKind(err))
+			return
+		}
+		logger.With(
+			"schedule_id", schedule.ID,
+			"warning_count", len(warnings),
+		).InfoContext(ctx, "schedule created")
+	}()
+
 	if input.CreatorID != principal.UserID && !principal.IsAdmin {
-		return Schedule{}, nil, ErrUnauthorized
+		err = ErrUnauthorized
+		return
 	}
 
 	vErr := &ValidationError{}
-
 	validateScheduleCore(input, vErr)
-
 	if vErr.HasErrors() {
-		return Schedule{}, nil, vErr
+		err = vErr
+		return
 	}
 
-	if err := s.ensureParticipantsExist(ctx, append(uniqueStrings(input.ParticipantIDs), input.CreatorID)); err != nil {
-		var inner *ValidationError
-		if errors.As(err, &inner) {
-			return Schedule{}, nil, err
-		}
-		return Schedule{}, nil, err
+	if err = s.ensureParticipantsExist(ctx, append(uniqueStrings(input.ParticipantIDs), input.CreatorID)); err != nil {
+		return
 	}
 
-	if err := s.ensureRoomExists(ctx, input.RoomID); err != nil {
-		return Schedule{}, nil, err
+	if err = s.ensureRoomExists(ctx, input.RoomID); err != nil {
+		return
 	}
 
 	createdAt := s.now()
-	schedule := Schedule{
+	schedule = Schedule{
 		ID:               s.idGenerator(),
 		CreatorID:        input.CreatorID,
 		Title:            strings.TrimSpace(input.Title),
@@ -125,65 +149,84 @@ func (s *ScheduleService) CreateSchedule(ctx context.Context, params CreateSched
 	}
 
 	if s.schedules == nil {
-		return schedule, nil, nil
+		return
 	}
 
-	warnings, err := s.detectConflicts(ctx, schedule)
+	warnings, err = s.detectConflicts(ctx, schedule)
 	if err != nil {
-		return Schedule{}, nil, err
+		return
 	}
 
-	persisted, err := s.schedules.CreateSchedule(ctx, schedule)
+	var persisted Schedule
+	persisted, err = s.schedules.CreateSchedule(ctx, schedule)
 	if err != nil {
-		return Schedule{}, nil, mapScheduleRepoError(err)
+		err = mapScheduleRepoError(err)
+		return
 	}
 
-	return persisted, warnings, nil
+	schedule = persisted
+	return
 }
 
 // UpdateSchedule applies validation and authorization before updating persistence state.
-func (s *ScheduleService) UpdateSchedule(ctx context.Context, params UpdateScheduleParams) (Schedule, []ConflictWarning, error) {
+func (s *ScheduleService) UpdateSchedule(ctx context.Context, params UpdateScheduleParams) (schedule Schedule, warnings []ConflictWarning, err error) {
 	if s == nil {
-		return Schedule{}, nil, fmt.Errorf("ScheduleService is nil")
+		err = fmt.Errorf("ScheduleService is nil")
+		return
 	}
 	if s.schedules == nil {
-		return Schedule{}, nil, fmt.Errorf("schedule repository not configured")
+		err = fmt.Errorf("schedule repository not configured")
+		return
 	}
 
-	existing, err := s.schedules.GetSchedule(ctx, params.ScheduleID)
+	scheduleID := params.ScheduleID
+	var existing Schedule
+	existing, err = s.schedules.GetSchedule(ctx, scheduleID)
 	if err != nil {
-		return Schedule{}, nil, mapScheduleRepoError(err)
+		err = mapScheduleRepoError(err)
+		return
 	}
 
 	principal := params.Principal
 	input := params.Input
 
+	logger := s.loggerWith(ctx, "UpdateSchedule",
+		"principal_id", principal.UserID,
+		"schedule_id", scheduleID,
+		"creator_id", existing.CreatorID,
+	)
+	defer func() {
+		if err != nil {
+			logger.ErrorContext(ctx, "failed to update schedule", "error", err, "error_kind", ErrorKind(err))
+			return
+		}
+		logger.With(
+			"schedule_id", schedule.ID,
+			"warning_count", len(warnings),
+		).InfoContext(ctx, "schedule updated")
+	}()
+
 	if existing.CreatorID != principal.UserID && !principal.IsAdmin {
-		return Schedule{}, nil, ErrUnauthorized
+		err = ErrUnauthorized
+		return
 	}
 
 	vErr := &ValidationError{}
-
 	if input.CreatorID != "" && input.CreatorID != existing.CreatorID {
 		vErr.add("creator_id", "creator cannot be changed")
 	}
-
 	validateScheduleCore(input, vErr)
-
 	if vErr.HasErrors() {
-		return Schedule{}, nil, vErr
+		err = vErr
+		return
 	}
 
-	if err := s.ensureParticipantsExist(ctx, append(uniqueStrings(input.ParticipantIDs), existing.CreatorID)); err != nil {
-		var inner *ValidationError
-		if errors.As(err, &inner) {
-			return Schedule{}, nil, err
-		}
-		return Schedule{}, nil, err
+	if err = s.ensureParticipantsExist(ctx, append(uniqueStrings(input.ParticipantIDs), existing.CreatorID)); err != nil {
+		return
 	}
 
-	if err := s.ensureRoomExists(ctx, input.RoomID); err != nil {
-		return Schedule{}, nil, err
+	if err = s.ensureRoomExists(ctx, input.RoomID); err != nil {
+		return
 	}
 
 	updated := existing
@@ -198,23 +241,26 @@ func (s *ScheduleService) UpdateSchedule(ctx context.Context, params UpdateSched
 
 	cleanupNeeded := needsRecurrenceCleanup(existing, updated)
 
-	warnings, err := s.detectConflicts(ctx, updated)
+	warnings, err = s.detectConflicts(ctx, updated)
 	if err != nil {
-		return Schedule{}, nil, err
+		return
 	}
 
-	persisted, err := s.schedules.UpdateSchedule(ctx, updated)
+	var persisted Schedule
+	persisted, err = s.schedules.UpdateSchedule(ctx, updated)
 	if err != nil {
-		return Schedule{}, nil, mapScheduleRepoError(err)
+		err = mapScheduleRepoError(err)
+		return
 	}
 
 	if cleanupNeeded && s.recurrences != nil {
-		if err := s.recurrences.DeleteRecurrencesForSchedule(ctx, persisted.ID); err != nil {
-			return Schedule{}, nil, err
+		if err = s.recurrences.DeleteRecurrencesForSchedule(ctx, persisted.ID); err != nil {
+			return
 		}
 	}
 
-	return persisted, warnings, nil
+	schedule = persisted
+	return
 }
 
 // DeleteSchedule ensures authorization before delegating to persistence.
@@ -226,49 +272,82 @@ func (s *ScheduleService) DeleteSchedule(ctx context.Context, principal Principa
 		return fmt.Errorf("schedule repository not configured")
 	}
 
+	logger := s.loggerWith(ctx, "DeleteSchedule",
+		"principal_id", principal.UserID,
+		"schedule_id", scheduleID,
+	)
+
 	existing, err := s.schedules.GetSchedule(ctx, scheduleID)
 	if err != nil {
-		return mapScheduleRepoError(err)
+		err = mapScheduleRepoError(err)
+		logger.ErrorContext(ctx, "failed to load schedule for deletion", "error", err, "error_kind", ErrorKind(err))
+		return err
 	}
 
 	if existing.CreatorID != principal.UserID && !principal.IsAdmin {
+		logger.ErrorContext(ctx, "unauthorized schedule delete attempt", "error", ErrUnauthorized, "error_kind", ErrorKind(ErrUnauthorized))
 		return ErrUnauthorized
 	}
 
 	if err := s.schedules.DeleteSchedule(ctx, scheduleID); err != nil {
-		return mapScheduleRepoError(err)
+		err = mapScheduleRepoError(err)
+		logger.ErrorContext(ctx, "failed to delete schedule", "error", err, "error_kind", ErrorKind(err))
+		return err
 	}
 
 	if s.recurrences != nil {
 		if err := s.recurrences.DeleteRecurrencesForSchedule(ctx, scheduleID); err != nil {
+			logger.ErrorContext(ctx, "failed to cleanup recurrences", "error", err, "error_kind", ErrorKind(err))
 			return err
 		}
 	}
-
+	logger.InfoContext(ctx, "schedule deleted")
 	return nil
 }
 
 // ListSchedules enumerates schedules visible to the requesting principal.
-func (s *ScheduleService) ListSchedules(ctx context.Context, params ListSchedulesParams) ([]Schedule, []ConflictWarning, error) {
+func (s *ScheduleService) ListSchedules(ctx context.Context, params ListSchedulesParams) (schedules []Schedule, warnings []ConflictWarning, err error) {
 	if s == nil {
-		return nil, nil, fmt.Errorf("ScheduleService is nil")
+		err = fmt.Errorf("ScheduleService is nil")
+		return
 	}
 	if s.schedules == nil {
-		return nil, nil, fmt.Errorf("schedule repository not configured")
+		err = fmt.Errorf("schedule repository not configured")
+		return
 	}
+
+	logger := s.loggerWith(ctx, "ListSchedules",
+		"principal_id", params.Principal.UserID,
+		"participant_filter_count", len(params.ParticipantIDs),
+		"period", string(params.Period),
+	)
+	defer func() {
+		if err != nil {
+			logger.ErrorContext(ctx, "failed to list schedules", "error", err, "error_kind", ErrorKind(err))
+			return
+		}
+		logger.With(
+			"result_count", len(schedules),
+			"warning_count", len(warnings),
+		).InfoContext(ctx, "schedules listed")
+	}()
 
 	filter := s.buildListFilter(params)
 
-	schedules, err := s.schedules.ListSchedules(ctx, filter)
+	var results []Schedule
+	results, err = s.schedules.ListSchedules(ctx, filter)
 	if err != nil {
 		if isNotFoundError(err) {
-			return nil, nil, nil
+			err = nil
+			schedules = nil
+			warnings = nil
+			return
 		}
-		return nil, nil, err
+		return
 	}
 
-	ordered := make([]Schedule, len(schedules))
-	copy(ordered, schedules)
+	ordered := make([]Schedule, len(results))
+	copy(ordered, results)
 	sort.SliceStable(ordered, func(i, j int) bool {
 		if ordered[i].Start.Equal(ordered[j].Start) {
 			return ordered[i].ID < ordered[j].ID
@@ -276,9 +355,9 @@ func (s *ScheduleService) ListSchedules(ctx context.Context, params ListSchedule
 		return ordered[i].Start.Before(ordered[j].Start)
 	})
 
-	warnings := detectListConflicts(ordered)
-
-	return ordered, warnings, nil
+	schedules = ordered
+	warnings = detectListConflicts(ordered)
+	return
 }
 
 func (s *ScheduleService) ensureParticipantsExist(ctx context.Context, ids []string) error {
