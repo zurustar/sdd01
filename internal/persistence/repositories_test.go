@@ -10,7 +10,28 @@ import (
 
 	"github.com/example/enterprise-scheduler/internal/persistence"
 	"github.com/example/enterprise-scheduler/internal/persistence/sqlite"
+	"github.com/example/enterprise-scheduler/internal/testfixtures"
 )
+
+func newPersistenceUser(opts ...testfixtures.UserOption) persistence.User {
+	return testfixtures.NewUserFixture(opts...).Persistence()
+}
+
+func newPersistenceRoom(opts ...testfixtures.RoomOption) persistence.Room {
+	return testfixtures.NewRoomFixture(opts...).Persistence()
+}
+
+func newPersistenceSchedule(opts ...testfixtures.ScheduleOption) persistence.Schedule {
+	return testfixtures.NewScheduleFixture(opts...).Persistence()
+}
+
+func newPersistenceRecurrence(opts ...testfixtures.RecurrenceOption) persistence.RecurrenceRule {
+	return testfixtures.NewRecurrenceFixture(opts...).Persistence()
+}
+
+func newPersistenceSession(opts ...testfixtures.SessionOption) persistence.Session {
+	return testfixtures.NewSessionFixture(opts...).Persistence()
+}
 
 func TestUserRepository(t *testing.T) {
 	t.Parallel()
@@ -22,15 +43,15 @@ func TestUserRepository(t *testing.T) {
 		harness := newSQLiteHarness(t)
 		defer harness.Cleanup()
 
-		user := persistence.User{
-			ID:           "user-1",
-			Email:        "alice@example.com",
-			DisplayName:  "Alice",
-			PasswordHash: "hash",
-			IsAdmin:      true,
-			CreatedAt:    time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC),
-			UpdatedAt:    time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC),
-		}
+		base := testfixtures.ReferenceTime()
+		user := newPersistenceUser(
+			testfixtures.WithUserID("user-1"),
+			testfixtures.WithUserEmail("alice@example.com"),
+			testfixtures.WithUserDisplayName("Alice"),
+			testfixtures.WithUserPasswordHash("hash"),
+			testfixtures.WithUserAdmin(true),
+			testfixtures.WithUserTimestamps(base, base),
+		)
 
 		if err := harness.Users.CreateUser(ctx, user); err != nil {
 			t.Fatalf("CreateUser failed: %v", err)
@@ -82,12 +103,25 @@ func TestUserRepository(t *testing.T) {
 		harness := newSQLiteHarness(t)
 		defer harness.Cleanup()
 
-		primary := persistence.User{ID: "user-1", Email: "duplicate@example.com", DisplayName: "Primary", PasswordHash: "hash", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
+		now := testfixtures.ReferenceTime()
+		primary := newPersistenceUser(
+			testfixtures.WithUserID("user-1"),
+			testfixtures.WithUserEmail("duplicate@example.com"),
+			testfixtures.WithUserDisplayName("Primary"),
+			testfixtures.WithUserPasswordHash("hash"),
+			testfixtures.WithUserTimestamps(now, now),
+		)
 		if err := harness.Users.CreateUser(ctx, primary); err != nil {
 			t.Fatalf("CreateUser failed: %v", err)
 		}
 
-		conflicting := persistence.User{ID: "user-2", Email: "duplicate@example.com", DisplayName: "Conflict", PasswordHash: "hash", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
+		conflicting := newPersistenceUser(
+			testfixtures.WithUserID("user-2"),
+			testfixtures.WithUserEmail("duplicate@example.com"),
+			testfixtures.WithUserDisplayName("Conflict"),
+			testfixtures.WithUserPasswordHash("hash"),
+			testfixtures.WithUserTimestamps(now.Add(time.Minute), now.Add(time.Minute)),
+		)
 		if err := harness.Users.CreateUser(ctx, conflicting); !errors.Is(err, persistence.ErrDuplicate) {
 			t.Fatalf("expected persistence.ErrDuplicate, got %v", err)
 		}
@@ -100,7 +134,14 @@ func TestUserRepository(t *testing.T) {
 		harness := newSQLiteHarness(t)
 		defer harness.Cleanup()
 
-		user := persistence.User{ID: "user-lookup", Email: "lookup@example.com", DisplayName: "Lookup", PasswordHash: "hash", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
+		now := testfixtures.ReferenceTime().Add(2 * time.Minute)
+		user := newPersistenceUser(
+			testfixtures.WithUserID("user-lookup"),
+			testfixtures.WithUserEmail("lookup@example.com"),
+			testfixtures.WithUserDisplayName("Lookup"),
+			testfixtures.WithUserPasswordHash("hash"),
+			testfixtures.WithUserTimestamps(now, now),
+		)
 		if err := harness.Users.CreateUser(ctx, user); err != nil {
 			t.Fatalf("CreateUser failed: %v", err)
 		}
@@ -121,11 +162,29 @@ func TestUserRepository(t *testing.T) {
 		harness := newSQLiteHarness(t)
 		defer harness.Cleanup()
 
-		base := time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)
+		base := testfixtures.ReferenceTime()
 		users := []persistence.User{
-			{ID: "user-a", Email: "a@example.com", DisplayName: "A", PasswordHash: "hash", CreatedAt: base, UpdatedAt: base},
-			{ID: "user-c", Email: "c@example.com", DisplayName: "C", PasswordHash: "hash", CreatedAt: base.Add(time.Minute), UpdatedAt: base.Add(time.Minute)},
-			{ID: "user-b", Email: "b@example.com", DisplayName: "B", PasswordHash: "hash", CreatedAt: base, UpdatedAt: base},
+			newPersistenceUser(
+				testfixtures.WithUserID("user-a"),
+				testfixtures.WithUserEmail("a@example.com"),
+				testfixtures.WithUserDisplayName("A"),
+				testfixtures.WithUserPasswordHash("hash"),
+				testfixtures.WithUserTimestamps(base, base),
+			),
+			newPersistenceUser(
+				testfixtures.WithUserID("user-c"),
+				testfixtures.WithUserEmail("c@example.com"),
+				testfixtures.WithUserDisplayName("C"),
+				testfixtures.WithUserPasswordHash("hash"),
+				testfixtures.WithUserTimestamps(base.Add(time.Minute), base.Add(time.Minute)),
+			),
+			newPersistenceUser(
+				testfixtures.WithUserID("user-b"),
+				testfixtures.WithUserEmail("b@example.com"),
+				testfixtures.WithUserDisplayName("B"),
+				testfixtures.WithUserPasswordHash("hash"),
+				testfixtures.WithUserTimestamps(base, base),
+			),
 		}
 		for _, u := range users {
 			if err := harness.Users.CreateUser(ctx, u); err != nil {
@@ -156,13 +215,25 @@ func TestRoomRepository(t *testing.T) {
 		defer harness.Cleanup()
 
 		// Seed creator to allow schedule references.
-		now := time.Now().UTC().Truncate(time.Second)
-		creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now}
+		now := testfixtures.ReferenceTime().Truncate(time.Second)
+		creator := newPersistenceUser(
+			testfixtures.WithUserID("creator"),
+			testfixtures.WithUserEmail("creator@example.com"),
+			testfixtures.WithUserDisplayName("Creator"),
+			testfixtures.WithUserPasswordHash("hash"),
+			testfixtures.WithUserTimestamps(now, now),
+		)
 		if err := harness.Users.CreateUser(ctx, creator); err != nil {
 			t.Fatalf("failed to seed creator: %v", err)
 		}
 
-		room := persistence.Room{ID: "room-1", Name: "会議室A", Location: "本社3F", Capacity: 8, CreatedAt: now, UpdatedAt: now}
+		room := newPersistenceRoom(
+			testfixtures.WithRoomID("room-1"),
+			testfixtures.WithRoomName("会議室A"),
+			testfixtures.WithRoomLocation("本社3F"),
+			testfixtures.WithRoomCapacity(8),
+			testfixtures.WithRoomTimestamps(now, now),
+		)
 		if err := harness.Rooms.CreateRoom(ctx, room); err != nil {
 			t.Fatalf("CreateRoom failed: %v", err)
 		}
@@ -192,19 +263,15 @@ func TestRoomRepository(t *testing.T) {
 			t.Fatalf("unexpected rooms: %#v", rooms)
 		}
 
-		schedule := persistence.Schedule{
-			ID:        "schedule-room",
-			Title:     "Room Meeting",
-			CreatorID: creator.ID,
-			Start:     now.Add(time.Hour),
-			End:       now.Add(2 * time.Hour),
-			Participants: []string{
-				creator.ID,
-			},
-			RoomID:    &room.ID,
-			CreatedAt: now,
-			UpdatedAt: now,
-		}
+		schedule := newPersistenceSchedule(
+			testfixtures.WithScheduleID("schedule-room"),
+			testfixtures.WithScheduleTitle("Room Meeting"),
+			testfixtures.WithScheduleCreator(creator.ID),
+			testfixtures.WithScheduleStartEnd(now.Add(time.Hour), now.Add(2*time.Hour)),
+			testfixtures.WithScheduleParticipants(creator.ID),
+			testfixtures.WithScheduleRoomID(room.ID),
+			testfixtures.WithScheduleTimestamps(now, now),
+		)
 		if err := harness.Schedules.CreateSchedule(ctx, schedule); err != nil {
 			t.Fatalf("CreateSchedule failed: %v", err)
 		}
@@ -543,8 +610,14 @@ func TestScheduleRepository(t *testing.T) {
 		harness := newSQLiteHarness(t)
 		defer harness.Cleanup()
 
-		now := time.Now().UTC()
-		creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now}
+		now := testfixtures.ReferenceTime()
+		creator := newPersistenceUser(
+			testfixtures.WithUserID("creator"),
+			testfixtures.WithUserEmail("creator@example.com"),
+			testfixtures.WithUserDisplayName("Creator"),
+			testfixtures.WithUserPasswordHash("hash"),
+			testfixtures.WithUserTimestamps(now, now),
+		)
 		if err := harness.Users.CreateUser(ctx, creator); err != nil {
 			t.Fatalf("failed to seed creator: %v", err)
 		}
@@ -562,10 +635,22 @@ func TestScheduleRepository(t *testing.T) {
 		harness := newSQLiteHarness(t)
 		defer harness.Cleanup()
 
-		now := time.Now().UTC()
+		now := testfixtures.ReferenceTime()
 		users := []persistence.User{
-			{ID: "user-a", Email: "a@example.com", DisplayName: "A", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now},
-			{ID: "user-b", Email: "b@example.com", DisplayName: "B", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now},
+			newPersistenceUser(
+				testfixtures.WithUserID("user-a"),
+				testfixtures.WithUserEmail("a@example.com"),
+				testfixtures.WithUserDisplayName("A"),
+				testfixtures.WithUserPasswordHash("hash"),
+				testfixtures.WithUserTimestamps(now, now),
+			),
+			newPersistenceUser(
+				testfixtures.WithUserID("user-b"),
+				testfixtures.WithUserEmail("b@example.com"),
+				testfixtures.WithUserDisplayName("B"),
+				testfixtures.WithUserPasswordHash("hash"),
+				testfixtures.WithUserTimestamps(now, now),
+			),
 		}
 		for _, u := range users {
 			if err := harness.Users.CreateUser(ctx, u); err != nil {
@@ -573,16 +658,14 @@ func TestScheduleRepository(t *testing.T) {
 			}
 		}
 
-		schedule := persistence.Schedule{
-			ID:           "sched-participants",
-			Title:        "Participants",
-			CreatorID:    "user-a",
-			Start:        now.Add(time.Hour),
-			End:          now.Add(2 * time.Hour),
-			Participants: []string{"user-b", "user-b", "user-a"},
-			CreatedAt:    now,
-			UpdatedAt:    now,
-		}
+		schedule := newPersistenceSchedule(
+			testfixtures.WithScheduleID("sched-participants"),
+			testfixtures.WithScheduleTitle("Participants"),
+			testfixtures.WithScheduleCreator("user-a"),
+			testfixtures.WithScheduleStartEnd(now.Add(time.Hour), now.Add(2*time.Hour)),
+			testfixtures.WithScheduleParticipants("user-b", "user-b", "user-a"),
+			testfixtures.WithScheduleTimestamps(now, now),
+		)
 		if err := harness.Schedules.CreateSchedule(ctx, schedule); err != nil {
 			t.Fatalf("CreateSchedule failed: %v", err)
 		}
@@ -609,12 +692,24 @@ func TestScheduleRepository(t *testing.T) {
 			t.Fatalf("failed to seed creator: %v", err)
 		}
 
-		schedule := persistence.Schedule{ID: "sched-delete", Title: "Delete", CreatorID: creator.ID, Start: now.Add(time.Hour), End: now.Add(2 * time.Hour), Participants: []string{creator.ID}, CreatedAt: now, UpdatedAt: now}
+		schedule := newPersistenceSchedule(
+			testfixtures.WithScheduleID("sched-delete"),
+			testfixtures.WithScheduleTitle("Delete"),
+			testfixtures.WithScheduleCreator(creator.ID),
+			testfixtures.WithScheduleStartEnd(now.Add(time.Hour), now.Add(2*time.Hour)),
+			testfixtures.WithScheduleParticipants(creator.ID),
+			testfixtures.WithScheduleTimestamps(now, now),
+		)
 		if err := harness.Schedules.CreateSchedule(ctx, schedule); err != nil {
 			t.Fatalf("CreateSchedule failed: %v", err)
 		}
 
-		rule := persistence.RecurrenceRule{ID: "recur-delete", ScheduleID: schedule.ID, Frequency: 1, Weekdays: []time.Weekday{time.Monday}, StartsOn: now.Truncate(24 * time.Hour), CreatedAt: now, UpdatedAt: now}
+		rule := newPersistenceRecurrence(
+			testfixtures.WithRecurrenceID("recur-delete"),
+			testfixtures.WithRecurrenceScheduleID(schedule.ID),
+			testfixtures.WithRecurrenceStartsOn(now.Truncate(24*time.Hour)),
+			testfixtures.WithRecurrenceTimestamps(now, now),
+		)
 		if err := harness.Recurrences.UpsertRecurrence(ctx, rule); err != nil {
 			t.Fatalf("UpsertRecurrence failed: %v", err)
 		}
@@ -707,8 +802,22 @@ func TestRecurrenceRepository(t *testing.T) {
 		}
 
 		rules := []persistence.RecurrenceRule{
-			{ID: "rule-1", ScheduleID: schedule.ID, Frequency: 1, Weekdays: []time.Weekday{time.Monday}, StartsOn: now.Truncate(24 * time.Hour), CreatedAt: now, UpdatedAt: now},
-			{ID: "rule-2", ScheduleID: schedule.ID, Frequency: 2, Weekdays: []time.Weekday{time.Tuesday}, StartsOn: now.Truncate(24 * time.Hour), CreatedAt: now.Add(time.Minute), UpdatedAt: now.Add(time.Minute)},
+			newPersistenceRecurrence(
+				testfixtures.WithRecurrenceID("rule-1"),
+				testfixtures.WithRecurrenceScheduleID(schedule.ID),
+				testfixtures.WithRecurrenceFrequency(1),
+				testfixtures.WithRecurrenceWeekdays(time.Monday),
+				testfixtures.WithRecurrenceStartsOn(now.Truncate(24*time.Hour)),
+				testfixtures.WithRecurrenceTimestamps(now, now),
+			),
+			newPersistenceRecurrence(
+				testfixtures.WithRecurrenceID("rule-2"),
+				testfixtures.WithRecurrenceScheduleID(schedule.ID),
+				testfixtures.WithRecurrenceFrequency(2),
+				testfixtures.WithRecurrenceWeekdays(time.Tuesday),
+				testfixtures.WithRecurrenceStartsOn(now.Truncate(24*time.Hour)),
+				testfixtures.WithRecurrenceTimestamps(now.Add(time.Minute), now.Add(time.Minute)),
+			),
 		}
 		for _, rule := range rules {
 			if err := harness.Recurrences.UpsertRecurrence(ctx, rule); err != nil {
@@ -734,19 +843,40 @@ func TestRecurrenceRepository(t *testing.T) {
 		harness := newSQLiteHarness(t)
 		defer harness.Cleanup()
 
-		now := time.Now().UTC()
-		creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now}
+		now := testfixtures.ReferenceTime()
+		creator := newPersistenceUser(
+			testfixtures.WithUserID("creator"),
+			testfixtures.WithUserEmail("creator@example.com"),
+			testfixtures.WithUserDisplayName("Creator"),
+			testfixtures.WithUserPasswordHash("hash"),
+			testfixtures.WithUserTimestamps(now, now),
+		)
 		if err := harness.Users.CreateUser(ctx, creator); err != nil {
 			t.Fatalf("failed to seed creator: %v", err)
 		}
-		schedule := persistence.Schedule{ID: "sched-invalid", Title: "Invalid", CreatorID: creator.ID, Start: now.Add(time.Hour), End: now.Add(2 * time.Hour), Participants: []string{creator.ID}, CreatedAt: now, UpdatedAt: now}
+		schedule := newPersistenceSchedule(
+			testfixtures.WithScheduleID("sched-invalid"),
+			testfixtures.WithScheduleTitle("Invalid"),
+			testfixtures.WithScheduleCreator(creator.ID),
+			testfixtures.WithScheduleStartEnd(now.Add(time.Hour), now.Add(2*time.Hour)),
+			testfixtures.WithScheduleParticipants(creator.ID),
+			testfixtures.WithScheduleTimestamps(now, now),
+		)
 		if err := harness.Schedules.CreateSchedule(ctx, schedule); err != nil {
 			t.Fatalf("CreateSchedule failed: %v", err)
 		}
 
 		startsOn := now.Truncate(24 * time.Hour)
 		endsOn := startsOn.Add(-24 * time.Hour)
-		rule := persistence.RecurrenceRule{ID: "invalid", ScheduleID: schedule.ID, Frequency: 1, Weekdays: []time.Weekday{time.Monday}, StartsOn: startsOn, EndsOn: &endsOn, CreatedAt: now, UpdatedAt: now}
+		rule := newPersistenceRecurrence(
+			testfixtures.WithRecurrenceID("invalid"),
+			testfixtures.WithRecurrenceScheduleID(schedule.ID),
+			testfixtures.WithRecurrenceFrequency(1),
+			testfixtures.WithRecurrenceWeekdays(time.Monday),
+			testfixtures.WithRecurrenceStartsOn(startsOn),
+			testfixtures.WithRecurrenceEndsOn(endsOn),
+			testfixtures.WithRecurrenceTimestamps(now, now),
+		)
 		if err := harness.Recurrences.UpsertRecurrence(ctx, rule); !errors.Is(err, persistence.ErrConstraintViolation) {
 			t.Fatalf("expected persistence.ErrConstraintViolation, got %v", err)
 		}
@@ -763,13 +893,26 @@ func TestSessionRepository(t *testing.T) {
 		harness := newSQLiteHarness(t)
 		defer harness.Cleanup()
 
-		now := time.Now().UTC().Truncate(time.Second)
-		user := persistence.User{ID: "user-session", Email: "session@example.com", DisplayName: "Session", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now}
+		now := testfixtures.ReferenceTime().Truncate(time.Second)
+		user := newPersistenceUser(
+			testfixtures.WithUserID("user-session"),
+			testfixtures.WithUserEmail("session@example.com"),
+			testfixtures.WithUserDisplayName("Session"),
+			testfixtures.WithUserPasswordHash("hash"),
+			testfixtures.WithUserTimestamps(now, now),
+		)
 		if err := harness.Users.CreateUser(ctx, user); err != nil {
 			t.Fatalf("failed to seed user: %v", err)
 		}
 
-		session := persistence.Session{ID: "session-1", UserID: user.ID, Token: "token-1", Fingerprint: "fp", CreatedAt: now, UpdatedAt: now, ExpiresAt: now.Add(24 * time.Hour)}
+		session := newPersistenceSession(
+			testfixtures.WithSessionID("session-1"),
+			testfixtures.WithSessionUserID(user.ID),
+			testfixtures.WithSessionToken("token-1"),
+			testfixtures.WithSessionFingerprint("fp"),
+			testfixtures.WithSessionTimestamps(now, now),
+			testfixtures.WithSessionExpiresAt(now.Add(24*time.Hour)),
+		)
 		created, err := harness.Sessions.CreateSession(ctx, session)
 		if err != nil {
 			t.Fatalf("CreateSession failed: %v", err)
@@ -832,28 +975,52 @@ func TestSessionRepository(t *testing.T) {
 		harness := newSQLiteHarness(t)
 		defer harness.Cleanup()
 
-		now := time.Now().UTC()
-		user := persistence.User{ID: "user", Email: "user@example.com", DisplayName: "User", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now}
+		now := testfixtures.ReferenceTime()
+		user := newPersistenceUser(
+			testfixtures.WithUserID("user"),
+			testfixtures.WithUserEmail("user@example.com"),
+			testfixtures.WithUserDisplayName("User"),
+			testfixtures.WithUserPasswordHash("hash"),
+			testfixtures.WithUserTimestamps(now, now),
+		)
 		if err := harness.Users.CreateUser(ctx, user); err != nil {
 			t.Fatalf("failed to seed user: %v", err)
 		}
 
-		session := persistence.Session{ID: "session", UserID: user.ID, Token: "token", CreatedAt: now, UpdatedAt: now, ExpiresAt: now.Add(time.Hour)}
+		session := newPersistenceSession(
+			testfixtures.WithSessionID("session"),
+			testfixtures.WithSessionUserID(user.ID),
+			testfixtures.WithSessionToken("token"),
+			testfixtures.WithSessionTimestamps(now, now),
+			testfixtures.WithSessionExpiresAt(now.Add(time.Hour)),
+		)
 		if _, err := harness.Sessions.CreateSession(ctx, session); err != nil {
 			t.Fatalf("CreateSession failed: %v", err)
 		}
 
-		duplicateToken := persistence.Session{ID: "other-session", UserID: user.ID, Token: "token", CreatedAt: now, UpdatedAt: now, ExpiresAt: now.Add(time.Hour)}
+		duplicateToken := newPersistenceSession(
+			testfixtures.WithSessionID("other-session"),
+			testfixtures.WithSessionUserID(user.ID),
+			testfixtures.WithSessionToken("token"),
+			testfixtures.WithSessionTimestamps(now, now),
+			testfixtures.WithSessionExpiresAt(now.Add(time.Hour)),
+		)
 		if _, err := harness.Sessions.CreateSession(ctx, duplicateToken); !errors.Is(err, persistence.ErrDuplicate) {
 			t.Fatalf("expected persistence.ErrDuplicate, got %v", err)
 		}
 
-		foreign := persistence.Session{ID: "foreign", UserID: "missing", Token: "token-foreign", CreatedAt: now, UpdatedAt: now, ExpiresAt: now.Add(time.Hour)}
+		foreign := newPersistenceSession(
+			testfixtures.WithSessionID("foreign"),
+			testfixtures.WithSessionUserID("missing"),
+			testfixtures.WithSessionToken("token-foreign"),
+			testfixtures.WithSessionTimestamps(now, now),
+			testfixtures.WithSessionExpiresAt(now.Add(time.Hour)),
+		)
 		if _, err := harness.Sessions.CreateSession(ctx, foreign); !errors.Is(err, persistence.ErrForeignKeyViolation) {
 			t.Fatalf("expected persistence.ErrForeignKeyViolation, got %v", err)
 		}
 
-		if _, err := harness.Sessions.UpdateSession(ctx, persistence.Session{ID: "missing", Token: "does-not-exist", UpdatedAt: now}); !errors.Is(err, persistence.ErrNotFound) {
+		if _, err := harness.Sessions.UpdateSession(ctx, newPersistenceSession(testfixtures.WithSessionID("missing"), testfixtures.WithSessionToken("does-not-exist"), testfixtures.WithSessionUpdatedAt(now))); !errors.Is(err, persistence.ErrNotFound) {
 			t.Fatalf("expected persistence.ErrNotFound on update, got %v", err)
 		}
 
