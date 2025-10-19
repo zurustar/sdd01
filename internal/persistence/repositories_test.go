@@ -3,13 +3,11 @@ package persistence_test
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"slices"
 	"testing"
 	"time"
 
 	"github.com/example/enterprise-scheduler/internal/persistence"
-	"github.com/example/enterprise-scheduler/internal/persistence/sqlite"
 	"github.com/example/enterprise-scheduler/internal/testfixtures"
 )
 
@@ -40,8 +38,8 @@ func TestUserRepository(t *testing.T) {
 		t.Parallel()
 
 		ctx := context.Background()
-		harness := newSQLiteHarness(t)
-		defer harness.Cleanup()
+		harness := testfixtures.NewSQLiteHarness(t)
+		defer harness.Close()
 
 		base := testfixtures.ReferenceTime()
 		user := newPersistenceUser(
@@ -100,8 +98,8 @@ func TestUserRepository(t *testing.T) {
 		t.Parallel()
 
 		ctx := context.Background()
-		harness := newSQLiteHarness(t)
-		defer harness.Cleanup()
+		harness := testfixtures.NewSQLiteHarness(t)
+		defer harness.Close()
 
 		now := testfixtures.ReferenceTime()
 		primary := newPersistenceUser(
@@ -131,8 +129,8 @@ func TestUserRepository(t *testing.T) {
 		t.Parallel()
 
 		ctx := context.Background()
-		harness := newSQLiteHarness(t)
-		defer harness.Cleanup()
+		harness := testfixtures.NewSQLiteHarness(t)
+		defer harness.Close()
 
 		now := testfixtures.ReferenceTime().Add(2 * time.Minute)
 		user := newPersistenceUser(
@@ -159,8 +157,8 @@ func TestUserRepository(t *testing.T) {
 		t.Parallel()
 
 		ctx := context.Background()
-		harness := newSQLiteHarness(t)
-		defer harness.Cleanup()
+		harness := testfixtures.NewSQLiteHarness(t)
+		defer harness.Close()
 
 		base := testfixtures.ReferenceTime()
 		users := []persistence.User{
@@ -211,8 +209,8 @@ func TestRoomRepository(t *testing.T) {
 		t.Parallel()
 
 		ctx := context.Background()
-		harness := newSQLiteHarness(t)
-		defer harness.Cleanup()
+		harness := testfixtures.NewSQLiteHarness(t)
+		defer harness.Close()
 
 		// Seed creator to allow schedule references.
 		now := testfixtures.ReferenceTime().Truncate(time.Second)
@@ -296,8 +294,8 @@ func TestRoomRepository(t *testing.T) {
 		t.Parallel()
 
 		ctx := context.Background()
-		harness := newSQLiteHarness(t)
-		defer harness.Cleanup()
+		harness := testfixtures.NewSQLiteHarness(t)
+		defer harness.Close()
 
 		invalid := persistence.Room{ID: "invalid", Name: "小会議室", Location: "支社", Capacity: 0, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
 		if err := harness.Rooms.CreateRoom(ctx, invalid); !errors.Is(err, persistence.ErrConstraintViolation) {
@@ -309,8 +307,8 @@ func TestRoomRepository(t *testing.T) {
 		t.Parallel()
 
 		ctx := context.Background()
-		harness := newSQLiteHarness(t)
-		defer harness.Cleanup()
+		harness := testfixtures.NewSQLiteHarness(t)
+		defer harness.Close()
 
 		now := time.Now().UTC()
 		rooms := []persistence.Room{
@@ -343,8 +341,8 @@ func TestScheduleRepository(t *testing.T) {
 		t.Parallel()
 
 		ctx := context.Background()
-		harness := newSQLiteHarness(t)
-		defer harness.Cleanup()
+		harness := testfixtures.NewSQLiteHarness(t)
+		defer harness.Close()
 
 		now := time.Now().UTC().Truncate(time.Second)
 		creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now}
@@ -383,8 +381,8 @@ func TestScheduleRepository(t *testing.T) {
 		t.Parallel()
 
 		ctx := context.Background()
-		harness := newSQLiteHarness(t)
-		defer harness.Cleanup()
+		harness := testfixtures.NewSQLiteHarness(t)
+		defer harness.Close()
 
 		now := time.Now().UTC().Truncate(time.Second)
 		creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now}
@@ -453,8 +451,8 @@ func TestScheduleRepository(t *testing.T) {
 		t.Parallel()
 
 		ctx := context.Background()
-		harness := newSQLiteHarness(t)
-		defer harness.Cleanup()
+		harness := testfixtures.NewSQLiteHarness(t)
+		defer harness.Close()
 
 		now := time.Now().UTC().Truncate(time.Second)
 		creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now}
@@ -524,8 +522,8 @@ func TestScheduleRepository(t *testing.T) {
 		t.Parallel()
 
 		ctx := context.Background()
-		harness := newSQLiteHarness(t)
-		defer harness.Cleanup()
+		harness := testfixtures.NewSQLiteHarness(t)
+		defer harness.Close()
 
 		now := time.Now().UTC().Truncate(time.Second)
 		users := []persistence.User{
@@ -572,8 +570,8 @@ func TestScheduleRepository(t *testing.T) {
 		t.Parallel()
 
 		ctx := context.Background()
-		harness := newSQLiteHarness(t)
-		defer harness.Cleanup()
+		harness := testfixtures.NewSQLiteHarness(t)
+		defer harness.Close()
 
 		now := time.Now().UTC().Truncate(time.Second)
 		creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now}
@@ -607,8 +605,8 @@ func TestScheduleRepository(t *testing.T) {
 		t.Parallel()
 
 		ctx := context.Background()
-		harness := newSQLiteHarness(t)
-		defer harness.Cleanup()
+		harness := testfixtures.NewSQLiteHarness(t)
+		defer harness.Close()
 
 		now := testfixtures.ReferenceTime()
 		creator := newPersistenceUser(
@@ -632,8 +630,8 @@ func TestScheduleRepository(t *testing.T) {
 		t.Parallel()
 
 		ctx := context.Background()
-		harness := newSQLiteHarness(t)
-		defer harness.Cleanup()
+		harness := testfixtures.NewSQLiteHarness(t)
+		defer harness.Close()
 
 		now := testfixtures.ReferenceTime()
 		users := []persistence.User{
@@ -683,8 +681,8 @@ func TestScheduleRepository(t *testing.T) {
 		t.Parallel()
 
 		ctx := context.Background()
-		harness := newSQLiteHarness(t)
-		defer harness.Cleanup()
+		harness := testfixtures.NewSQLiteHarness(t)
+		defer harness.Close()
 
 		now := time.Now().UTC()
 		creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now}
@@ -738,8 +736,8 @@ func TestRecurrenceRepository(t *testing.T) {
 		t.Parallel()
 
 		ctx := context.Background()
-		harness := newSQLiteHarness(t)
-		defer harness.Cleanup()
+		harness := testfixtures.NewSQLiteHarness(t)
+		defer harness.Close()
 
 		now := time.Now().UTC().Truncate(time.Second)
 		creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now}
@@ -788,8 +786,8 @@ func TestRecurrenceRepository(t *testing.T) {
 		t.Parallel()
 
 		ctx := context.Background()
-		harness := newSQLiteHarness(t)
-		defer harness.Cleanup()
+		harness := testfixtures.NewSQLiteHarness(t)
+		defer harness.Close()
 
 		now := time.Now().UTC()
 		creator := persistence.User{ID: "creator", Email: "creator@example.com", DisplayName: "Creator", PasswordHash: "hash", CreatedAt: now, UpdatedAt: now}
@@ -840,8 +838,8 @@ func TestRecurrenceRepository(t *testing.T) {
 		t.Parallel()
 
 		ctx := context.Background()
-		harness := newSQLiteHarness(t)
-		defer harness.Cleanup()
+		harness := testfixtures.NewSQLiteHarness(t)
+		defer harness.Close()
 
 		now := testfixtures.ReferenceTime()
 		creator := newPersistenceUser(
@@ -890,8 +888,8 @@ func TestSessionRepository(t *testing.T) {
 		t.Parallel()
 
 		ctx := context.Background()
-		harness := newSQLiteHarness(t)
-		defer harness.Cleanup()
+		harness := testfixtures.NewSQLiteHarness(t)
+		defer harness.Close()
 
 		now := testfixtures.ReferenceTime().Truncate(time.Second)
 		user := newPersistenceUser(
@@ -972,8 +970,8 @@ func TestSessionRepository(t *testing.T) {
 		t.Parallel()
 
 		ctx := context.Background()
-		harness := newSQLiteHarness(t)
-		defer harness.Cleanup()
+		harness := testfixtures.NewSQLiteHarness(t)
+		defer harness.Close()
 
 		now := testfixtures.ReferenceTime()
 		user := newPersistenceUser(
@@ -1028,41 +1026,4 @@ func TestSessionRepository(t *testing.T) {
 			t.Fatalf("expected persistence.ErrNotFound on revoke, got %v", err)
 		}
 	})
-}
-
-type sqliteHarness struct {
-	Users       persistence.UserRepository
-	Rooms       persistence.RoomRepository
-	Schedules   persistence.ScheduleRepository
-	Recurrences persistence.RecurrenceRepository
-	Sessions    persistence.SessionRepository
-	Cleanup     func()
-}
-
-func newSQLiteHarness(t *testing.T) sqliteHarness {
-	t.Helper()
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "scheduler.db")
-
-	storage, err := sqlite.Open(path)
-	if err != nil {
-		t.Fatalf("failed to open storage: %v", err)
-	}
-
-	if err := storage.Migrate(context.Background()); err != nil {
-		storage.Close()
-		t.Fatalf("failed to migrate: %v", err)
-	}
-
-	return sqliteHarness{
-		Users:       storage,
-		Rooms:       storage,
-		Schedules:   storage,
-		Recurrences: storage,
-		Sessions:    storage,
-		Cleanup: func() {
-			_ = storage.Close()
-		},
-	}
 }
