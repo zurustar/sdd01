@@ -2,6 +2,8 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
+	_ "embed"
 	"errors"
 	"fmt"
 	"os"
@@ -12,7 +14,11 @@ import (
 	"time"
 
 	"github.com/example/enterprise-scheduler/internal/persistence"
+	_ "modernc.org/sqlite"
 )
+
+//go:embed schema.sql
+var schemaSQL string
 
 // Storage implements persistence repositories using an in-process data store
 // that simulates SQLite behaviour without relying on CGO.
@@ -73,8 +79,18 @@ func (s *Storage) Close() error {
 	return nil
 }
 
-// Migrate performs a no-op migration step to align with the interface contract.
+// Migrate applies the embedded schema using the stub database/sql driver so
+// that migration plumbing can be exercised without CGO.
 func (s *Storage) Migrate(ctx context.Context) error {
+	db, err := sql.Open("sqlite", fmt.Sprintf("file:%s", s.path))
+	if err != nil {
+		return fmt.Errorf("sqlite: open migration connection: %w", err)
+	}
+	defer db.Close()
+
+	if err := runStatements(ctx, db, schemaSQL); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -794,4 +810,78 @@ func cloneSession(session persistence.Session) persistence.Session {
 		clone.RevokedAt = &revoked
 	}
 	return clone
+}
+
+func runStatements(ctx context.Context, db *sql.DB, script string) error {
+	statements := splitSQLStatements(script)
+	for _, stmt := range statements {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("sqlite: execute migration statement: %w", err)
+		}
+	}
+	return nil
+}
+
+func splitSQLStatements(script string) []string {
+	var (
+		statements []string
+		builder    strings.Builder
+		inString   bool
+	)
+
+	for i := 0; i < len(script); i++ {
+		ch := script[i]
+
+		if !inString {
+			if ch == '-' && i+1 < len(script) && script[i+1] == '-' {
+				i += 2
+				for i < len(script) && script[i] != '\n' {
+					i++
+				}
+				continue
+			}
+			if ch == '/' && i+1 < len(script) && script[i+1] == '*' {
+				i += 2
+				for i < len(script)-1 {
+					if script[i] == '*' && script[i+1] == '/' {
+						i++
+						break
+					}
+					i++
+				}
+				continue
+			}
+		}
+
+		if ch == '\'' {
+			builder.WriteByte(ch)
+			if inString {
+				if i+1 < len(script) && script[i+1] == '\'' {
+					builder.WriteByte(script[i+1])
+					i++
+				} else {
+					inString = false
+				}
+			} else {
+				inString = true
+			}
+			continue
+		}
+
+		if ch == ';' && !inString {
+			stmt := strings.TrimSpace(builder.String())
+			builder.Reset()
+			if stmt != "" {
+				statements = append(statements, stmt)
+			}
+			continue
+		}
+
+		builder.WriteByte(ch)
+	}
+
+	if trailing := strings.TrimSpace(builder.String()); trailing != "" {
+		statements = append(statements, trailing)
+	}
+	return statements
 }
