@@ -13,6 +13,7 @@ import (
 // CredentialStore exposes user credential lookup operations required by the auth service.
 type CredentialStore interface {
 	GetUserCredentialsByEmail(ctx context.Context, email string) (UserCredentials, error)
+	GetUser(ctx context.Context, id string) (User, error)
 }
 
 // SessionRepository captures the persistence interactions for issued sessions.
@@ -270,4 +271,66 @@ func (s *AuthService) RevokeSession(ctx context.Context, token string) error {
 	}
 	logger.InfoContext(ctx, "session revoked")
 	return nil
+}
+
+// ValidateSession verifies that the provided token corresponds to an active session and returns its principal.
+func (s *AuthService) ValidateSession(ctx context.Context, token string) (principal Principal, err error) {
+	if s == nil {
+		err = fmt.Errorf("AuthService is nil")
+		return
+	}
+	if s.sessions == nil {
+		err = fmt.Errorf("session repository not configured")
+		return
+	}
+	if s.credentials == nil {
+		err = fmt.Errorf("credential store not configured")
+		return
+	}
+
+	trimmed := strings.TrimSpace(token)
+	logger := s.loggerWith(ctx, "ValidateSession", "token_provided", trimmed != "")
+	defer func() {
+		if err != nil {
+			logger.ErrorContext(ctx, "session validation failed", "error", err, "error_kind", ErrorKind(err))
+			return
+		}
+		logger.With("principal_id", principal.UserID).InfoContext(ctx, "session validated")
+	}()
+
+	if trimmed == "" {
+		err = ErrInvalidCredentials
+		return
+	}
+
+	var session Session
+	session, err = s.sessions.GetSession(ctx, trimmed)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			err = ErrUnauthorized
+		}
+		return
+	}
+
+	now := s.now()
+	if session.RevokedAt != nil && !session.RevokedAt.IsZero() {
+		err = ErrSessionRevoked
+		return
+	}
+	if !session.ExpiresAt.IsZero() && !session.ExpiresAt.After(now) {
+		err = ErrSessionExpired
+		return
+	}
+
+	var user User
+	user, err = s.credentials.GetUser(ctx, session.UserID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			err = ErrUnauthorized
+		}
+		return
+	}
+
+	principal = Principal{UserID: user.ID, IsAdmin: user.IsAdmin}
+	return
 }

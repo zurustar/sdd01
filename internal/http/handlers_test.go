@@ -748,6 +748,39 @@ func TestScheduleHandlers(t *testing.T) {
 func TestRoomHandlers(t *testing.T) {
 	t.Parallel()
 
+	t.Run("rejects unauthenticated requests for list", func(t *testing.T) {
+		t.Parallel()
+
+		service := &fakeRoomService{
+			listRoomsFunc: func(ctx context.Context, principal application.Principal) ([]application.Room, error) {
+				t.Fatal("ListRooms should not be called when principal is missing")
+				return nil, nil
+			},
+		}
+
+		handler := NewRoomHandler(service, nil)
+
+		req := httptest.NewRequest(http.MethodGet, "/rooms", nil)
+		recorder := httptest.NewRecorder()
+
+		handler.List(recorder, req)
+
+		res := recorder.Result()
+		t.Cleanup(func() { _ = res.Body.Close() })
+
+		if res.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("expected status 401 Unauthorized, got %d", res.StatusCode)
+		}
+
+		var payload errorResponse
+		if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+			t.Fatalf("failed to decode error response: %v", err)
+		}
+		if payload.Message != "セッショントークンが指定されていません。" {
+			t.Fatalf("unexpected error message: %q", payload.Message)
+		}
+	})
+
 	t.Run("allow non-admins to list rooms", func(t *testing.T) {
 		t.Parallel()
 		var capturedPrincipal application.Principal
