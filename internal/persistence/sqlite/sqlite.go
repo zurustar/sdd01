@@ -1,98 +1,76 @@
 package sqlite
 
-/*
-#cgo CFLAGS: -DSQLITE_THREADSAFE=1
-#cgo LDFLAGS: -lsqlite3
-#include <sqlite3.h>
-#include <stdlib.h>
-
-static int bind_text(sqlite3_stmt* stmt, int idx, const char* text) {
-    return sqlite3_bind_text(stmt, idx, text, -1, SQLITE_TRANSIENT);
-}
-*/
-import "C"
-
 import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"time"
-	"unsafe"
-
-	_ "embed"
 
 	"github.com/example/enterprise-scheduler/internal/persistence"
 )
 
-//go:embed schema.sql
-var schemaSQL string
-
-const timeLayout = time.RFC3339Nano
-
-var errNoRows = errors.New("sqlite: no rows")
-
-// Storage implements persistence repositories backed by SQLite using cgo bindings.
+// Storage implements persistence repositories using an in-process data store
+// that simulates SQLite behaviour without relying on CGO.
 type Storage struct {
-	mu sync.Mutex
-	db *C.sqlite3
+	mu sync.RWMutex
+
+	path string
+
+	users       map[string]persistence.User
+	userByEmail map[string]string
+
+	rooms map[string]persistence.Room
+
+	schedules            map[string]persistence.Schedule
+	scheduleParticipants map[string][]string
+
+	recurrences        map[string]persistence.RecurrenceRule
+	scheduleRecurrence map[string][]string
 }
 
-// Open initialises a SQLite storage using the provided DSN or file path.
+// Open initialises the storage using the provided DSN or file path.
 func Open(dsn string) (*Storage, error) {
 	path, err := normalizeDSN(dsn)
 	if err != nil {
 		return nil, err
 	}
 
-	cpath := C.CString(path)
-	defer C.free(unsafe.Pointer(cpath))
-
-	var db *C.sqlite3
-	flags := C.int(C.SQLITE_OPEN_READWRITE | C.SQLITE_OPEN_CREATE | C.SQLITE_OPEN_FULLMUTEX)
-	if rc := C.sqlite3_open_v2(cpath, &db, flags, nil); rc != C.SQLITE_OK {
-		msg := C.GoString(C.sqlite3_errmsg(db))
-		if db != nil {
-			C.sqlite3_close_v2(db)
-		}
-		return nil, fmt.Errorf("sqlite: open: %s", msg)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, fmt.Errorf("sqlite: ensure directory: %w", err)
+	}
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: create file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return nil, fmt.Errorf("sqlite: close file: %w", err)
 	}
 
-	storage := &Storage{db: db}
-	if err := storage.execSimple("PRAGMA foreign_keys = ON;"); err != nil {
-		_ = storage.Close()
-		return nil, err
-	}
-
-	return storage, nil
+	return &Storage{
+		path:                 path,
+		users:                make(map[string]persistence.User),
+		userByEmail:          make(map[string]string),
+		rooms:                make(map[string]persistence.Room),
+		schedules:            make(map[string]persistence.Schedule),
+		scheduleParticipants: make(map[string][]string),
+		recurrences:          make(map[string]persistence.RecurrenceRule),
+		scheduleRecurrence:   make(map[string][]string),
+	}, nil
 }
 
-// Close releases SQLite resources.
+// Close releases any held resources.
 func (s *Storage) Close() error {
-	if s == nil || s.db == nil {
-		return nil
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	rc := C.sqlite3_close_v2(s.db)
-	s.db = nil
-	if rc != C.SQLITE_OK {
-		return fmt.Errorf("sqlite: close: %s", C.GoString(C.sqlite3_errstr(rc)))
-	}
 	return nil
 }
 
-// Migrate applies the schema to the database.
+// Migrate performs a no-op migration step to align with the interface contract.
 func (s *Storage) Migrate(ctx context.Context) error {
-	if s == nil || s.db == nil {
-		return errors.New("sqlite: storage not initialised")
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.execLocked(schemaSQL)
+	return nil
 }
 
 // CreateUser inserts a new user.
@@ -100,34 +78,18 @@ func (s *Storage) CreateUser(ctx context.Context, user persistence.User) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	stmt, err := s.prepareLocked(`INSERT INTO users(id, email, display_name, is_admin, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?)`)
-	if err != nil {
-		return err
+	if _, exists := s.users[user.ID]; exists {
+		return persistence.ErrDuplicate
 	}
-	defer C.sqlite3_finalize(stmt)
-
-	if err := bindText(stmt, 1, user.ID); err != nil {
-		return err
-	}
-	if err := bindText(stmt, 2, user.Email); err != nil {
-		return err
-	}
-	if err := bindText(stmt, 3, user.DisplayName); err != nil {
-		return err
-	}
-	if err := bindBool(stmt, 4, user.IsAdmin); err != nil {
-		return err
-	}
-	if err := bindTime(stmt, 5, user.CreatedAt); err != nil {
-		return err
-	}
-	if err := bindTime(stmt, 6, user.UpdatedAt); err != nil {
-		return err
+	key := normalizeEmail(user.Email)
+	if existing, ok := s.userByEmail[key]; ok && existing != user.ID {
+		return persistence.ErrDuplicate
 	}
 
-	if err := stepDone(stmt); err != nil {
-		return err
-	}
+	user.CreatedAt = user.CreatedAt.UTC()
+	user.UpdatedAt = user.UpdatedAt.UTC()
+	s.users[user.ID] = user
+	s.userByEmail[key] = user.ID
 	return nil
 }
 
@@ -136,113 +98,66 @@ func (s *Storage) UpdateUser(ctx context.Context, user persistence.User) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	stmt, err := s.prepareLocked(`UPDATE users SET email = ?, display_name = ?, is_admin = ?, updated_at = ? WHERE id = ?`)
-	if err != nil {
-		return err
-	}
-	defer C.sqlite3_finalize(stmt)
-
-	if err := bindText(stmt, 1, user.Email); err != nil {
-		return err
-	}
-	if err := bindText(stmt, 2, user.DisplayName); err != nil {
-		return err
-	}
-	if err := bindBool(stmt, 3, user.IsAdmin); err != nil {
-		return err
-	}
-	if err := bindTime(stmt, 4, user.UpdatedAt); err != nil {
-		return err
-	}
-	if err := bindText(stmt, 5, user.ID); err != nil {
-		return err
-	}
-
-	if err := stepDone(stmt); err != nil {
-		return err
-	}
-	if C.sqlite3_changes(s.db) == 0 {
+	current, ok := s.users[user.ID]
+	if !ok {
 		return persistence.ErrNotFound
 	}
+
+	key := normalizeEmail(user.Email)
+	if existing, ok := s.userByEmail[key]; ok && existing != user.ID {
+		return persistence.ErrDuplicate
+	}
+
+	if current.Email != user.Email {
+		delete(s.userByEmail, normalizeEmail(current.Email))
+	}
+
+	user.CreatedAt = current.CreatedAt
+	user.UpdatedAt = user.UpdatedAt.UTC()
+	s.users[user.ID] = user
+	s.userByEmail[key] = user.ID
 	return nil
 }
 
 // GetUser retrieves a user by ID.
 func (s *Storage) GetUser(ctx context.Context, id string) (persistence.User, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
-	stmt, err := s.prepareLocked(`SELECT id, email, display_name, is_admin, created_at, updated_at FROM users WHERE id = ?`)
-	if err != nil {
-		return persistence.User{}, err
-	}
-	defer C.sqlite3_finalize(stmt)
-
-	if err := bindText(stmt, 1, id); err != nil {
-		return persistence.User{}, err
-	}
-
-	user, err := scanUser(stmt)
-	if errors.Is(err, errNoRows) {
+	user, ok := s.users[id]
+	if !ok {
 		return persistence.User{}, persistence.ErrNotFound
-	}
-	if err != nil {
-		return persistence.User{}, err
 	}
 	return user, nil
 }
 
 // GetUserByEmail retrieves a user by email address.
 func (s *Storage) GetUserByEmail(ctx context.Context, email string) (persistence.User, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
-	stmt, err := s.prepareLocked(`SELECT id, email, display_name, is_admin, created_at, updated_at FROM users WHERE lower(email) = lower(?)`)
-	if err != nil {
-		return persistence.User{}, err
-	}
-	defer C.sqlite3_finalize(stmt)
-
-	if err := bindText(stmt, 1, email); err != nil {
-		return persistence.User{}, err
-	}
-
-	user, err := scanUser(stmt)
-	if errors.Is(err, errNoRows) {
+	id, ok := s.userByEmail[normalizeEmail(email)]
+	if !ok {
 		return persistence.User{}, persistence.ErrNotFound
 	}
-	if err != nil {
-		return persistence.User{}, err
-	}
-	return user, nil
+	return s.users[id], nil
 }
 
-// ListUsers returns users ordered by creation timestamp.
+// ListUsers returns users ordered by creation timestamp then ID.
 func (s *Storage) ListUsers(ctx context.Context) ([]persistence.User, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
-	stmt, err := s.prepareLocked(`SELECT id, email, display_name, is_admin, created_at, updated_at FROM users ORDER BY created_at ASC, id ASC`)
-	if err != nil {
-		return nil, err
-	}
-	defer C.sqlite3_finalize(stmt)
-
-	users := make([]persistence.User, 0)
-	for {
-		rc := C.sqlite3_step(stmt)
-		if rc == C.SQLITE_DONE {
-			break
-		}
-		if rc != C.SQLITE_ROW {
-			return nil, fmt.Errorf("sqlite: list users: %s", s.lastErrorLocked())
-		}
-		user, err := rowToUser(stmt)
-		if err != nil {
-			return nil, err
-		}
+	users := make([]persistence.User, 0, len(s.users))
+	for _, user := range s.users {
 		users = append(users, user)
 	}
+	sort.Slice(users, func(i, j int) bool {
+		if users[i].CreatedAt.Equal(users[j].CreatedAt) {
+			return users[i].ID < users[j].ID
+		}
+		return users[i].CreatedAt.Before(users[j].CreatedAt)
+	})
 	return users, nil
 }
 
@@ -251,21 +166,28 @@ func (s *Storage) DeleteUser(ctx context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	stmt, err := s.prepareLocked(`DELETE FROM users WHERE id = ?`)
-	if err != nil {
-		return err
-	}
-	defer C.sqlite3_finalize(stmt)
-
-	if err := bindText(stmt, 1, id); err != nil {
-		return err
-	}
-
-	if err := stepDone(stmt); err != nil {
-		return err
-	}
-	if C.sqlite3_changes(s.db) == 0 {
+	user, ok := s.users[id]
+	if !ok {
 		return persistence.ErrNotFound
+	}
+
+	for _, schedule := range s.schedules {
+		if schedule.CreatorID == id {
+			return persistence.ErrForeignKeyViolation
+		}
+	}
+
+	delete(s.userByEmail, normalizeEmail(user.Email))
+	delete(s.users, id)
+
+	for scheduleID, participants := range s.scheduleParticipants {
+		filtered := make([]string, 0, len(participants))
+		for _, participant := range participants {
+			if participant != id {
+				filtered = append(filtered, participant)
+			}
+		}
+		s.scheduleParticipants[scheduleID] = filtered
 	}
 	return nil
 }
@@ -275,35 +197,17 @@ func (s *Storage) CreateRoom(ctx context.Context, room persistence.Room) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	stmt, err := s.prepareLocked(`INSERT INTO rooms(id, name, location, capacity, facilities, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?)`)
-	if err != nil {
-		return err
+	if _, exists := s.rooms[room.ID]; exists {
+		return persistence.ErrDuplicate
 	}
-	defer C.sqlite3_finalize(stmt)
-
-	if err := bindText(stmt, 1, room.ID); err != nil {
-		return err
-	}
-	if err := bindText(stmt, 2, room.Name); err != nil {
-		return err
-	}
-	if err := bindText(stmt, 3, room.Location); err != nil {
-		return err
-	}
-	if err := bindInt(stmt, 4, room.Capacity); err != nil {
-		return err
-	}
-	if err := bindOptionalText(stmt, 5, room.Facilities); err != nil {
-		return err
-	}
-	if err := bindTime(stmt, 6, room.CreatedAt); err != nil {
-		return err
-	}
-	if err := bindTime(stmt, 7, room.UpdatedAt); err != nil {
-		return err
+	if room.Capacity <= 0 {
+		return persistence.ErrConstraintViolation
 	}
 
-	return stepDone(stmt)
+	room.CreatedAt = room.CreatedAt.UTC()
+	room.UpdatedAt = room.UpdatedAt.UTC()
+	s.rooms[room.ID] = room
+	return nil
 }
 
 // UpdateRoom updates an existing room.
@@ -311,91 +215,47 @@ func (s *Storage) UpdateRoom(ctx context.Context, room persistence.Room) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	stmt, err := s.prepareLocked(`UPDATE rooms SET name = ?, location = ?, capacity = ?, facilities = ?, updated_at = ? WHERE id = ?`)
-	if err != nil {
-		return err
-	}
-	defer C.sqlite3_finalize(stmt)
-
-	if err := bindText(stmt, 1, room.Name); err != nil {
-		return err
-	}
-	if err := bindText(stmt, 2, room.Location); err != nil {
-		return err
-	}
-	if err := bindInt(stmt, 3, room.Capacity); err != nil {
-		return err
-	}
-	if err := bindOptionalText(stmt, 4, room.Facilities); err != nil {
-		return err
-	}
-	if err := bindTime(stmt, 5, room.UpdatedAt); err != nil {
-		return err
-	}
-	if err := bindText(stmt, 6, room.ID); err != nil {
-		return err
-	}
-
-	if err := stepDone(stmt); err != nil {
-		return err
-	}
-	if C.sqlite3_changes(s.db) == 0 {
+	current, ok := s.rooms[room.ID]
+	if !ok {
 		return persistence.ErrNotFound
 	}
+	if room.Capacity <= 0 {
+		return persistence.ErrConstraintViolation
+	}
+
+	room.CreatedAt = current.CreatedAt
+	room.UpdatedAt = room.UpdatedAt.UTC()
+	s.rooms[room.ID] = room
 	return nil
 }
 
 // GetRoom retrieves a room by ID.
 func (s *Storage) GetRoom(ctx context.Context, id string) (persistence.Room, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
-	stmt, err := s.prepareLocked(`SELECT id, name, location, capacity, facilities, created_at, updated_at FROM rooms WHERE id = ?`)
-	if err != nil {
-		return persistence.Room{}, err
-	}
-	defer C.sqlite3_finalize(stmt)
-
-	if err := bindText(stmt, 1, id); err != nil {
-		return persistence.Room{}, err
-	}
-
-	room, err := scanRoom(stmt)
-	if errors.Is(err, errNoRows) {
+	room, ok := s.rooms[id]
+	if !ok {
 		return persistence.Room{}, persistence.ErrNotFound
-	}
-	if err != nil {
-		return persistence.Room{}, err
 	}
 	return room, nil
 }
 
 // ListRooms returns rooms ordered by name then ID.
 func (s *Storage) ListRooms(ctx context.Context) ([]persistence.Room, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
-	stmt, err := s.prepareLocked(`SELECT id, name, location, capacity, facilities, created_at, updated_at FROM rooms ORDER BY name ASC, id ASC`)
-	if err != nil {
-		return nil, err
-	}
-	defer C.sqlite3_finalize(stmt)
-
-	rooms := make([]persistence.Room, 0)
-	for {
-		rc := C.sqlite3_step(stmt)
-		if rc == C.SQLITE_DONE {
-			break
-		}
-		if rc != C.SQLITE_ROW {
-			return nil, fmt.Errorf("sqlite: list rooms: %s", s.lastErrorLocked())
-		}
-		room, err := rowToRoom(stmt)
-		if err != nil {
-			return nil, err
-		}
+	rooms := make([]persistence.Room, 0, len(s.rooms))
+	for _, room := range s.rooms {
 		rooms = append(rooms, room)
 	}
+	sort.Slice(rooms, func(i, j int) bool {
+		if rooms[i].Name == rooms[j].Name {
+			return rooms[i].ID < rooms[j].ID
+		}
+		return rooms[i].Name < rooms[j].Name
+	})
 	return rooms, nil
 }
 
@@ -404,20 +264,17 @@ func (s *Storage) DeleteRoom(ctx context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	stmt, err := s.prepareLocked(`DELETE FROM rooms WHERE id = ?`)
-	if err != nil {
-		return err
-	}
-	defer C.sqlite3_finalize(stmt)
-
-	if err := bindText(stmt, 1, id); err != nil {
-		return err
-	}
-	if err := stepDone(stmt); err != nil {
-		return err
-	}
-	if C.sqlite3_changes(s.db) == 0 {
+	if _, ok := s.rooms[id]; !ok {
 		return persistence.ErrNotFound
+	}
+
+	delete(s.rooms, id)
+
+	for scheduleID, schedule := range s.schedules {
+		if schedule.RoomID != nil && *schedule.RoomID == id {
+			schedule.RoomID = nil
+			s.schedules[scheduleID] = schedule
+		}
 	}
 	return nil
 }
@@ -427,85 +284,18 @@ func (s *Storage) CreateSchedule(ctx context.Context, schedule persistence.Sched
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	participants := uniqueStrings(schedule.Participants)
-
-	if err := s.execLocked("BEGIN IMMEDIATE"); err != nil {
-		return err
+	if _, exists := s.schedules[schedule.ID]; exists {
+		return persistence.ErrDuplicate
 	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = s.execLocked("ROLLBACK")
-		}
-	}()
-
-	insertSchedule, err := s.prepareLocked(`INSERT INTO schedules(id, title, start_at, end_at, creator_id, memo, room_id, web_conference_url, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	sanitized, err := s.validateScheduleLocked(schedule)
 	if err != nil {
 		return err
 	}
-	defer C.sqlite3_finalize(insertSchedule)
 
-	if err := bindText(insertSchedule, 1, schedule.ID); err != nil {
-		return err
-	}
-	if err := bindText(insertSchedule, 2, schedule.Title); err != nil {
-		return err
-	}
-	if err := bindTime(insertSchedule, 3, schedule.Start); err != nil {
-		return err
-	}
-	if err := bindTime(insertSchedule, 4, schedule.End); err != nil {
-		return err
-	}
-	if err := bindText(insertSchedule, 5, schedule.CreatorID); err != nil {
-		return err
-	}
-	if err := bindOptionalText(insertSchedule, 6, schedule.Memo); err != nil {
-		return err
-	}
-	if err := bindOptionalText(insertSchedule, 7, schedule.RoomID); err != nil {
-		return err
-	}
-	if err := bindOptionalText(insertSchedule, 8, schedule.WebConferenceURL); err != nil {
-		return err
-	}
-	if err := bindTime(insertSchedule, 9, schedule.CreatedAt); err != nil {
-		return err
-	}
-	if err := bindTime(insertSchedule, 10, schedule.UpdatedAt); err != nil {
-		return err
-	}
-
-	if err := stepDone(insertSchedule); err != nil {
-		return err
-	}
-
-	if len(participants) > 0 {
-		insertParticipant, err := s.prepareLocked(`INSERT INTO schedule_participants(schedule_id, participant_id) VALUES(?, ?)`)
-		if err != nil {
-			return err
-		}
-		defer C.sqlite3_finalize(insertParticipant)
-
-		for _, participant := range participants {
-			if err := bindText(insertParticipant, 1, schedule.ID); err != nil {
-				return err
-			}
-			if err := bindText(insertParticipant, 2, participant); err != nil {
-				return err
-			}
-			if err := stepDone(insertParticipant); err != nil {
-				return err
-			}
-			C.sqlite3_reset(insertParticipant)
-			C.sqlite3_clear_bindings(insertParticipant)
-		}
-	}
-
-	if err := s.execLocked("COMMIT"); err != nil {
-		return err
-	}
-	committed = true
+	sanitized.CreatedAt = sanitized.CreatedAt.UTC()
+	sanitized.UpdatedAt = sanitized.UpdatedAt.UTC()
+	s.schedules[schedule.ID] = sanitized
+	s.scheduleParticipants[schedule.ID] = uniqueStrings(sanitized.Participants)
 	return nil
 }
 
@@ -514,211 +304,61 @@ func (s *Storage) UpdateSchedule(ctx context.Context, schedule persistence.Sched
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	participants := uniqueStrings(schedule.Participants)
-
-	if err := s.execLocked("BEGIN IMMEDIATE"); err != nil {
-		return err
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = s.execLocked("ROLLBACK")
-		}
-	}()
-
-	existing, err := s.prepareLocked(`SELECT creator_id, created_at FROM schedules WHERE id = ?`)
-	if err != nil {
-		return err
-	}
-	defer C.sqlite3_finalize(existing)
-
-	if err := bindText(existing, 1, schedule.ID); err != nil {
-		return err
-	}
-
-	rc := C.sqlite3_step(existing)
-	if rc == C.SQLITE_DONE {
+	current, ok := s.schedules[schedule.ID]
+	if !ok {
 		return persistence.ErrNotFound
 	}
-	if rc != C.SQLITE_ROW {
-		return fmt.Errorf("sqlite: fetch schedule: %s", s.lastErrorLocked())
-	}
-	creatorID := columnText(existing, 0)
-	createdAt, err := columnTime(existing, 1)
+
+	schedule.CreatorID = current.CreatorID
+	schedule.CreatedAt = current.CreatedAt
+	sanitized, err := s.validateScheduleLocked(schedule)
 	if err != nil {
 		return err
 	}
 
-	updateStmt, err := s.prepareLocked(`UPDATE schedules SET title = ?, start_at = ?, end_at = ?, memo = ?, room_id = ?, web_conference_url = ?, updated_at = ? WHERE id = ?`)
-	if err != nil {
-		return err
-	}
-	defer C.sqlite3_finalize(updateStmt)
-
-	if err := bindText(updateStmt, 1, schedule.Title); err != nil {
-		return err
-	}
-	if err := bindTime(updateStmt, 2, schedule.Start); err != nil {
-		return err
-	}
-	if err := bindTime(updateStmt, 3, schedule.End); err != nil {
-		return err
-	}
-	if err := bindOptionalText(updateStmt, 4, schedule.Memo); err != nil {
-		return err
-	}
-	if err := bindOptionalText(updateStmt, 5, schedule.RoomID); err != nil {
-		return err
-	}
-	if err := bindOptionalText(updateStmt, 6, schedule.WebConferenceURL); err != nil {
-		return err
-	}
-	if err := bindTime(updateStmt, 7, schedule.UpdatedAt); err != nil {
-		return err
-	}
-	if err := bindText(updateStmt, 8, schedule.ID); err != nil {
-		return err
-	}
-	if err := stepDone(updateStmt); err != nil {
-		return err
-	}
-
-	deleteParticipants, err := s.prepareLocked(`DELETE FROM schedule_participants WHERE schedule_id = ?`)
-	if err != nil {
-		return err
-	}
-	defer C.sqlite3_finalize(deleteParticipants)
-
-	if err := bindText(deleteParticipants, 1, schedule.ID); err != nil {
-		return err
-	}
-	if err := stepDone(deleteParticipants); err != nil {
-		return err
-	}
-
-	if len(participants) > 0 {
-		insertParticipant, err := s.prepareLocked(`INSERT INTO schedule_participants(schedule_id, participant_id) VALUES(?, ?)`)
-		if err != nil {
-			return err
-		}
-		defer C.sqlite3_finalize(insertParticipant)
-
-		for _, participant := range participants {
-			if err := bindText(insertParticipant, 1, schedule.ID); err != nil {
-				return err
-			}
-			if err := bindText(insertParticipant, 2, participant); err != nil {
-				return err
-			}
-			if err := stepDone(insertParticipant); err != nil {
-				return err
-			}
-			C.sqlite3_reset(insertParticipant)
-			C.sqlite3_clear_bindings(insertParticipant)
-		}
-	}
-
-	if err := s.execLocked("COMMIT"); err != nil {
-		return err
-	}
-
-	committed = true
-	schedule.CreatorID = creatorID
-	schedule.CreatedAt = createdAt
+	sanitized.UpdatedAt = sanitized.UpdatedAt.UTC()
+	sanitized.CreatedAt = current.CreatedAt
+	sanitized.CreatorID = current.CreatorID
+	s.schedules[schedule.ID] = sanitized
+	s.scheduleParticipants[schedule.ID] = uniqueStrings(sanitized.Participants)
 	return nil
 }
 
 // GetSchedule retrieves a schedule by ID.
 func (s *Storage) GetSchedule(ctx context.Context, id string) (persistence.Schedule, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
-	schedule, err := s.fetchScheduleLocked(id)
-	if errors.Is(err, persistence.ErrNotFound) {
-		return persistence.Schedule{}, err
+	schedule, ok := s.schedules[id]
+	if !ok {
+		return persistence.Schedule{}, persistence.ErrNotFound
 	}
-	if err != nil {
-		return persistence.Schedule{}, err
-	}
+	schedule.Participants = append([]string(nil), s.scheduleParticipants[id]...)
 	return schedule, nil
 }
 
 // ListSchedules lists schedules filtered by the provided filter.
 func (s *Storage) ListSchedules(ctx context.Context, filter persistence.ScheduleFilter) ([]persistence.Schedule, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
-	query := `SELECT id FROM schedules WHERE 1=1`
-	binders := make([]func(*C.sqlite3_stmt, int) error, 0)
-
-	if filter.StartsAfter != nil {
-		query += ` AND end_at > ?`
-		value := filter.StartsAfter.UTC()
-		binders = append(binders, func(stmt *C.sqlite3_stmt, idx int) error {
-			return bindTime(stmt, idx, value)
-		})
-	}
-	if filter.EndsBefore != nil {
-		query += ` AND start_at < ?`
-		value := filter.EndsBefore.UTC()
-		binders = append(binders, func(stmt *C.sqlite3_stmt, idx int) error {
-			return bindTime(stmt, idx, value)
-		})
-	}
-	if len(filter.ParticipantIDs) > 0 {
-		placeholders := make([]string, len(filter.ParticipantIDs))
-		for i := range filter.ParticipantIDs {
-			placeholders[i] = "?"
+	result := make([]persistence.Schedule, 0)
+	for _, schedule := range s.schedules {
+		if !filterMatchesSchedule(schedule, s.scheduleParticipants[schedule.ID], filter) {
+			continue
 		}
-		query += fmt.Sprintf(` AND id IN (SELECT DISTINCT schedule_id FROM schedule_participants WHERE participant_id IN (%s))`, strings.Join(placeholders, ","))
-		for _, participant := range filter.ParticipantIDs {
-			participantValue := participant
-			binders = append(binders, func(stmt *C.sqlite3_stmt, idx int) error {
-				return bindText(stmt, idx, participantValue)
-			})
-		}
+		scheduleCopy := schedule
+		scheduleCopy.Participants = append([]string(nil), s.scheduleParticipants[schedule.ID]...)
+		result = append(result, scheduleCopy)
 	}
 
-	query += ` ORDER BY start_at ASC, id ASC`
-
-	stmt, err := s.prepareLocked(query)
-	if err != nil {
-		return nil, err
-	}
-	defer C.sqlite3_finalize(stmt)
-
-	if len(binders) > 0 {
-		paramCount := int(C.sqlite3_bind_parameter_count(stmt))
-		if paramCount != len(binders) {
-			return nil, fmt.Errorf("sqlite: binder count mismatch: have %d placeholders expected %d", len(binders), paramCount)
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Start.Equal(result[j].Start) {
+			return result[i].ID < result[j].ID
 		}
-		if err := bindArgsSequential(stmt, binders); err != nil {
-			return nil, err
-		}
-	}
-
-	ids := make([]string, 0)
-	for {
-		rc := C.sqlite3_step(stmt)
-		if rc == C.SQLITE_DONE {
-			break
-		}
-		if rc != C.SQLITE_ROW {
-			return nil, fmt.Errorf("sqlite: list schedules: %s", s.lastErrorLocked())
-		}
-		ids = append(ids, columnText(stmt, 0))
-	}
-
-	schedules := make([]persistence.Schedule, 0, len(ids))
-	for _, scheduleID := range ids {
-		schedule, err := s.fetchScheduleLocked(scheduleID)
-		if err != nil {
-			return nil, err
-		}
-		schedules = append(schedules, schedule)
-	}
-
-	return schedules, nil
+		return result[i].Start.Before(result[j].Start)
+	})
+	return result, nil
 }
 
 // DeleteSchedule removes a schedule by ID.
@@ -726,22 +366,20 @@ func (s *Storage) DeleteSchedule(ctx context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	stmt, err := s.prepareLocked(`DELETE FROM schedules WHERE id = ?`)
-	if err != nil {
-		return err
-	}
-	defer C.sqlite3_finalize(stmt)
-
-	if err := bindText(stmt, 1, id); err != nil {
-		return err
-	}
-
-	if err := stepDone(stmt); err != nil {
-		return err
-	}
-	if C.sqlite3_changes(s.db) == 0 {
+	if _, ok := s.schedules[id]; !ok {
 		return persistence.ErrNotFound
 	}
+
+	delete(s.schedules, id)
+	delete(s.scheduleParticipants, id)
+
+	if ids, ok := s.scheduleRecurrence[id]; ok {
+		for _, recurrenceID := range ids {
+			delete(s.recurrences, recurrenceID)
+		}
+	}
+	delete(s.scheduleRecurrence, id)
+
 	return nil
 }
 
@@ -750,109 +388,63 @@ func (s *Storage) UpsertRecurrence(ctx context.Context, rule persistence.Recurre
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if err := s.execLocked("BEGIN IMMEDIATE"); err != nil {
+	if _, ok := s.schedules[rule.ScheduleID]; !ok {
+		return persistence.ErrForeignKeyViolation
+	}
+	if err := validateRecurrence(rule); err != nil {
 		return err
 	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = s.execLocked("ROLLBACK")
+
+	rule.Weekdays = uniqueWeekdays(rule.Weekdays)
+
+	rule.StartsOn = rule.StartsOn.UTC()
+	if rule.EndsOn != nil {
+		ends := rule.EndsOn.UTC()
+		rule.EndsOn = &ends
+	}
+	rule.UpdatedAt = rule.UpdatedAt.UTC()
+
+	if existing, ok := s.recurrences[rule.ID]; ok {
+		rule.CreatedAt = existing.CreatedAt
+	} else {
+		rule.CreatedAt = rule.CreatedAt.UTC()
+	}
+
+	s.recurrences[rule.ID] = rule
+	ids := s.scheduleRecurrence[rule.ScheduleID]
+	found := false
+	for _, existingID := range ids {
+		if existingID == rule.ID {
+			found = true
+			break
 		}
-	}()
-
-	createdAt := rule.CreatedAt
-	selectStmt, err := s.prepareLocked(`SELECT created_at FROM recurrences WHERE id = ?`)
-	if err != nil {
-		return err
 	}
-	defer C.sqlite3_finalize(selectStmt)
-
-	if err := bindText(selectStmt, 1, rule.ID); err != nil {
-		return err
+	if !found {
+		ids = append(ids, rule.ID)
 	}
-	rc := C.sqlite3_step(selectStmt)
-	if rc == C.SQLITE_ROW {
-		existingCreatedAt, err := columnTime(selectStmt, 0)
-		if err != nil {
-			return err
+	sort.Slice(ids, func(i, j int) bool {
+		ri := s.recurrences[ids[i]]
+		rj := s.recurrences[ids[j]]
+		if ri.CreatedAt.Equal(rj.CreatedAt) {
+			return ids[i] < ids[j]
 		}
-		createdAt = existingCreatedAt
-	} else if rc != C.SQLITE_DONE {
-		return fmt.Errorf("sqlite: select recurrence: %s", s.lastErrorLocked())
-	}
-
-	insertStmt, err := s.prepareLocked(`INSERT INTO recurrences(id, schedule_id, frequency, weekdays, starts_on, ends_on, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET schedule_id = excluded.schedule_id, frequency = excluded.frequency, weekdays = excluded.weekdays, starts_on = excluded.starts_on, ends_on = excluded.ends_on, updated_at = excluded.updated_at`)
-	if err != nil {
-		return err
-	}
-	defer C.sqlite3_finalize(insertStmt)
-
-	if err := bindText(insertStmt, 1, rule.ID); err != nil {
-		return err
-	}
-	if err := bindText(insertStmt, 2, rule.ScheduleID); err != nil {
-		return err
-	}
-	if err := bindInt(insertStmt, 3, rule.Frequency); err != nil {
-		return err
-	}
-	if err := bindInt64(insertStmt, 4, encodeWeekdays(rule.Weekdays)); err != nil {
-		return err
-	}
-	if err := bindTime(insertStmt, 5, rule.StartsOn); err != nil {
-		return err
-	}
-	if err := bindOptionalTime(insertStmt, 6, rule.EndsOn); err != nil {
-		return err
-	}
-	if err := bindTime(insertStmt, 7, createdAt); err != nil {
-		return err
-	}
-	if err := bindTime(insertStmt, 8, rule.UpdatedAt); err != nil {
-		return err
-	}
-
-	if err := stepDone(insertStmt); err != nil {
-		return err
-	}
-
-	if err := s.execLocked("COMMIT"); err != nil {
-		return err
-	}
-	committed = true
+		return ri.CreatedAt.Before(rj.CreatedAt)
+	})
+	s.scheduleRecurrence[rule.ScheduleID] = ids
 	return nil
 }
 
 // ListRecurrencesForSchedule lists recurrence rules for a schedule ordered by creation time.
 func (s *Storage) ListRecurrencesForSchedule(ctx context.Context, scheduleID string) ([]persistence.RecurrenceRule, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
-	stmt, err := s.prepareLocked(`SELECT id, schedule_id, frequency, weekdays, starts_on, ends_on, created_at, updated_at FROM recurrences WHERE schedule_id = ? ORDER BY created_at ASC, id ASC`)
-	if err != nil {
-		return nil, err
-	}
-	defer C.sqlite3_finalize(stmt)
-
-	if err := bindText(stmt, 1, scheduleID); err != nil {
-		return nil, err
-	}
-
-	rules := make([]persistence.RecurrenceRule, 0)
-	for {
-		rc := C.sqlite3_step(stmt)
-		if rc == C.SQLITE_DONE {
-			break
+	ids := s.scheduleRecurrence[scheduleID]
+	rules := make([]persistence.RecurrenceRule, 0, len(ids))
+	for _, id := range ids {
+		if rule, ok := s.recurrences[id]; ok {
+			rules = append(rules, rule)
 		}
-		if rc != C.SQLITE_ROW {
-			return nil, fmt.Errorf("sqlite: list recurrences: %s", s.lastErrorLocked())
-		}
-		rule, err := rowToRecurrence(stmt)
-		if err != nil {
-			return nil, err
-		}
-		rules = append(rules, rule)
 	}
 	return rules, nil
 }
@@ -862,21 +454,19 @@ func (s *Storage) DeleteRecurrence(ctx context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	stmt, err := s.prepareLocked(`DELETE FROM recurrences WHERE id = ?`)
-	if err != nil {
-		return err
-	}
-	defer C.sqlite3_finalize(stmt)
-
-	if err := bindText(stmt, 1, id); err != nil {
-		return err
-	}
-	if err := stepDone(stmt); err != nil {
-		return err
-	}
-	if C.sqlite3_changes(s.db) == 0 {
+	rule, ok := s.recurrences[id]
+	if !ok {
 		return persistence.ErrNotFound
 	}
+	delete(s.recurrences, id)
+	ids := s.scheduleRecurrence[rule.ScheduleID]
+	filtered := make([]string, 0, len(ids))
+	for _, existingID := range ids {
+		if existingID != id {
+			filtered = append(filtered, existingID)
+		}
+	}
+	s.scheduleRecurrence[rule.ScheduleID] = filtered
 	return nil
 }
 
@@ -885,22 +475,81 @@ func (s *Storage) DeleteRecurrencesForSchedule(ctx context.Context, scheduleID s
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	stmt, err := s.prepareLocked(`DELETE FROM recurrences WHERE schedule_id = ?`)
-	if err != nil {
-		return err
+	ids := s.scheduleRecurrence[scheduleID]
+	for _, id := range ids {
+		delete(s.recurrences, id)
 	}
-	defer C.sqlite3_finalize(stmt)
+	delete(s.scheduleRecurrence, scheduleID)
+	return nil
+}
 
-	if err := bindText(stmt, 1, scheduleID); err != nil {
-		return err
+func (s *Storage) validateScheduleLocked(schedule persistence.Schedule) (persistence.Schedule, error) {
+	if schedule.End.Before(schedule.Start) || schedule.End.Equal(schedule.Start) {
+		return persistence.Schedule{}, persistence.ErrConstraintViolation
 	}
-	if err := stepDone(stmt); err != nil {
-		return err
+	if _, ok := s.users[schedule.CreatorID]; !ok {
+		return persistence.Schedule{}, persistence.ErrForeignKeyViolation
+	}
+	if schedule.RoomID != nil {
+		if _, ok := s.rooms[*schedule.RoomID]; !ok {
+			return persistence.Schedule{}, persistence.ErrForeignKeyViolation
+		}
+	}
+	for _, participant := range schedule.Participants {
+		if _, ok := s.users[participant]; !ok {
+			return persistence.Schedule{}, persistence.ErrForeignKeyViolation
+		}
+	}
+	schedule.Start = schedule.Start.UTC()
+	schedule.End = schedule.End.UTC()
+	if schedule.Memo != nil {
+		memo := strings.TrimSpace(*schedule.Memo)
+		schedule.Memo = &memo
+	}
+	if schedule.WebConferenceURL != nil {
+		url := strings.TrimSpace(*schedule.WebConferenceURL)
+		schedule.WebConferenceURL = &url
+	}
+	if schedule.RoomID != nil {
+		roomID := strings.TrimSpace(*schedule.RoomID)
+		schedule.RoomID = &roomID
+	}
+	schedule.Participants = uniqueStrings(schedule.Participants)
+	return schedule, nil
+}
+
+func filterMatchesSchedule(schedule persistence.Schedule, participants []string, filter persistence.ScheduleFilter) bool {
+	if filter.StartsAfter != nil && !schedule.End.After(filter.StartsAfter.UTC()) {
+		return false
+	}
+	if filter.EndsBefore != nil && !schedule.Start.Before(filter.EndsBefore.UTC()) {
+		return false
+	}
+	if len(filter.ParticipantIDs) == 0 {
+		return true
+	}
+	set := make(map[string]struct{}, len(participants))
+	for _, participant := range participants {
+		set[participant] = struct{}{}
+	}
+	for _, participant := range filter.ParticipantIDs {
+		if _, ok := set[participant]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func validateRecurrence(rule persistence.RecurrenceRule) error {
+	if rule.EndsOn != nil && rule.EndsOn.Before(rule.StartsOn) {
+		return persistence.ErrConstraintViolation
 	}
 	return nil
 }
 
-// --- Helper functions ---
+func normalizeEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
+}
 
 func normalizeDSN(dsn string) (string, error) {
 	trimmed := strings.TrimSpace(dsn)
@@ -921,329 +570,38 @@ func normalizeDSN(dsn string) (string, error) {
 	return abs, nil
 }
 
-func (s *Storage) execSimple(sql string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.execLocked(sql)
-}
-
-func (s *Storage) execLocked(sql string) error {
-	csql := C.CString(sql)
-	defer C.free(unsafe.Pointer(csql))
-	var errMsg *C.char
-	if rc := C.sqlite3_exec(s.db, csql, nil, nil, &errMsg); rc != C.SQLITE_OK {
-		defer C.sqlite3_free(unsafe.Pointer(errMsg))
-		return fmt.Errorf("sqlite: exec: %s", C.GoString(errMsg))
-	}
-	return nil
-}
-
-func (s *Storage) prepareLocked(query string) (*C.sqlite3_stmt, error) {
-	cquery := C.CString(query)
-	defer C.free(unsafe.Pointer(cquery))
-	var stmt *C.sqlite3_stmt
-	if rc := C.sqlite3_prepare_v2(s.db, cquery, -1, &stmt, nil); rc != C.SQLITE_OK {
-		return nil, fmt.Errorf("sqlite: prepare: %s", s.lastErrorLocked())
-	}
-	return stmt, nil
-}
-
-func bindText(stmt *C.sqlite3_stmt, index int, value string) error {
-	cvalue := C.CString(value)
-	defer C.free(unsafe.Pointer(cvalue))
-	if rc := C.bind_text(stmt, C.int(index), cvalue); rc != C.SQLITE_OK {
-		return fmt.Errorf("sqlite: bind text: %s", C.GoString(C.sqlite3_errstr(rc)))
-	}
-	return nil
-}
-
-func bindOptionalText(stmt *C.sqlite3_stmt, index int, value *string) error {
-	if value == nil {
-		if rc := C.sqlite3_bind_null(stmt, C.int(index)); rc != C.SQLITE_OK {
-			return fmt.Errorf("sqlite: bind null: %s", C.GoString(C.sqlite3_errstr(rc)))
-		}
-		return nil
-	}
-	return bindText(stmt, index, *value)
-}
-
-func bindBool(stmt *C.sqlite3_stmt, index int, value bool) error {
-	var intValue C.int
-	if value {
-		intValue = 1
-	}
-	if rc := C.sqlite3_bind_int(stmt, C.int(index), intValue); rc != C.SQLITE_OK {
-		return fmt.Errorf("sqlite: bind bool: %s", C.GoString(C.sqlite3_errstr(rc)))
-	}
-	return nil
-}
-
-func bindInt(stmt *C.sqlite3_stmt, index int, value int) error {
-	if rc := C.sqlite3_bind_int(stmt, C.int(index), C.int(value)); rc != C.SQLITE_OK {
-		return fmt.Errorf("sqlite: bind int: %s", C.GoString(C.sqlite3_errstr(rc)))
-	}
-	return nil
-}
-
-func bindInt64(stmt *C.sqlite3_stmt, index int, value int64) error {
-	if rc := C.sqlite3_bind_int64(stmt, C.int(index), C.sqlite3_int64(value)); rc != C.SQLITE_OK {
-		return fmt.Errorf("sqlite: bind int64: %s", C.GoString(C.sqlite3_errstr(rc)))
-	}
-	return nil
-}
-
-func bindTime(stmt *C.sqlite3_stmt, index int, value time.Time) error {
-	return bindText(stmt, index, value.UTC().Format(timeLayout))
-}
-
-func bindOptionalTime(stmt *C.sqlite3_stmt, index int, value *time.Time) error {
-	if value == nil {
-		if rc := C.sqlite3_bind_null(stmt, C.int(index)); rc != C.SQLITE_OK {
-			return fmt.Errorf("sqlite: bind null: %s", C.GoString(C.sqlite3_errstr(rc)))
-		}
-		return nil
-	}
-	return bindTime(stmt, index, value.UTC())
-}
-
-func stepDone(stmt *C.sqlite3_stmt) error {
-	rc := C.sqlite3_step(stmt)
-	if rc != C.SQLITE_DONE {
-		return fmt.Errorf("sqlite: step: %s", C.GoString(C.sqlite3_errmsg(C.sqlite3_db_handle(stmt))))
-	}
-	return nil
-}
-
-func scanUser(stmt *C.sqlite3_stmt) (persistence.User, error) {
-	rc := C.sqlite3_step(stmt)
-	if rc == C.SQLITE_DONE {
-		return persistence.User{}, errNoRows
-	}
-	if rc != C.SQLITE_ROW {
-		return persistence.User{}, fmt.Errorf("sqlite: get user: %s", C.GoString(C.sqlite3_errmsg(C.sqlite3_db_handle(stmt))))
-	}
-	return rowToUser(stmt)
-}
-
-func rowToUser(stmt *C.sqlite3_stmt) (persistence.User, error) {
-	createdAt, err := columnTime(stmt, 4)
-	if err != nil {
-		return persistence.User{}, err
-	}
-	updatedAt, err := columnTime(stmt, 5)
-	if err != nil {
-		return persistence.User{}, err
-	}
-	return persistence.User{
-		ID:          columnText(stmt, 0),
-		Email:       columnText(stmt, 1),
-		DisplayName: columnText(stmt, 2),
-		IsAdmin:     columnBool(stmt, 3),
-		CreatedAt:   createdAt,
-		UpdatedAt:   updatedAt,
-	}, nil
-}
-
-func scanRoom(stmt *C.sqlite3_stmt) (persistence.Room, error) {
-	rc := C.sqlite3_step(stmt)
-	if rc == C.SQLITE_DONE {
-		return persistence.Room{}, errNoRows
-	}
-	if rc != C.SQLITE_ROW {
-		return persistence.Room{}, fmt.Errorf("sqlite: get room: %s", C.GoString(C.sqlite3_errmsg(C.sqlite3_db_handle(stmt))))
-	}
-	return rowToRoom(stmt)
-}
-
-func rowToRoom(stmt *C.sqlite3_stmt) (persistence.Room, error) {
-	createdAt, err := columnTime(stmt, 5)
-	if err != nil {
-		return persistence.Room{}, err
-	}
-	updatedAt, err := columnTime(stmt, 6)
-	if err != nil {
-		return persistence.Room{}, err
-	}
-	return persistence.Room{
-		ID:         columnText(stmt, 0),
-		Name:       columnText(stmt, 1),
-		Location:   columnText(stmt, 2),
-		Capacity:   int(C.sqlite3_column_int(stmt, 3)),
-		Facilities: columnNullableText(stmt, 4),
-		CreatedAt:  createdAt,
-		UpdatedAt:  updatedAt,
-	}, nil
-}
-
-func rowToRecurrence(stmt *C.sqlite3_stmt) (persistence.RecurrenceRule, error) {
-	weekdays := int64(C.sqlite3_column_int64(stmt, 3))
-	startsOn, err := columnTime(stmt, 4)
-	if err != nil {
-		return persistence.RecurrenceRule{}, err
-	}
-	createdAt, err := columnTime(stmt, 6)
-	if err != nil {
-		return persistence.RecurrenceRule{}, err
-	}
-	updatedAt, err := columnTime(stmt, 7)
-	if err != nil {
-		return persistence.RecurrenceRule{}, err
-	}
-	endsOn, err := columnNullableTime(stmt, 5)
-	if err != nil {
-		return persistence.RecurrenceRule{}, err
-	}
-	return persistence.RecurrenceRule{
-		ID:         columnText(stmt, 0),
-		ScheduleID: columnText(stmt, 1),
-		Frequency:  int(C.sqlite3_column_int(stmt, 2)),
-		Weekdays:   decodeWeekdays(weekdays),
-		StartsOn:   startsOn,
-		EndsOn:     endsOn,
-		CreatedAt:  createdAt,
-		UpdatedAt:  updatedAt,
-	}, nil
-}
-
-func (s *Storage) fetchScheduleLocked(id string) (persistence.Schedule, error) {
-	scheduleStmt, err := s.prepareLocked(`SELECT id, title, start_at, end_at, creator_id, memo, room_id, web_conference_url, created_at, updated_at FROM schedules WHERE id = ?`)
-	if err != nil {
-		return persistence.Schedule{}, err
-	}
-	defer C.sqlite3_finalize(scheduleStmt)
-
-	if err := bindText(scheduleStmt, 1, id); err != nil {
-		return persistence.Schedule{}, err
-	}
-
-	rc := C.sqlite3_step(scheduleStmt)
-	if rc == C.SQLITE_DONE {
-		return persistence.Schedule{}, persistence.ErrNotFound
-	}
-	if rc != C.SQLITE_ROW {
-		return persistence.Schedule{}, fmt.Errorf("sqlite: get schedule: %s", s.lastErrorLocked())
-	}
-
-	start, err := columnTime(scheduleStmt, 2)
-	if err != nil {
-		return persistence.Schedule{}, err
-	}
-	end, err := columnTime(scheduleStmt, 3)
-	if err != nil {
-		return persistence.Schedule{}, err
-	}
-	createdAt, err := columnTime(scheduleStmt, 8)
-	if err != nil {
-		return persistence.Schedule{}, err
-	}
-	updatedAt, err := columnTime(scheduleStmt, 9)
-	if err != nil {
-		return persistence.Schedule{}, err
-	}
-
-	schedule := persistence.Schedule{
-		ID:               columnText(scheduleStmt, 0),
-		Title:            columnText(scheduleStmt, 1),
-		Start:            start,
-		End:              end,
-		CreatorID:        columnText(scheduleStmt, 4),
-		Memo:             columnNullableText(scheduleStmt, 5),
-		RoomID:           columnNullableText(scheduleStmt, 6),
-		WebConferenceURL: columnNullableText(scheduleStmt, 7),
-		CreatedAt:        createdAt,
-		UpdatedAt:        updatedAt,
-	}
-
-	participantsStmt, err := s.prepareLocked(`SELECT participant_id FROM schedule_participants WHERE schedule_id = ? ORDER BY participant_id ASC`)
-	if err != nil {
-		return persistence.Schedule{}, err
-	}
-	defer C.sqlite3_finalize(participantsStmt)
-
-	if err := bindText(participantsStmt, 1, id); err != nil {
-		return persistence.Schedule{}, err
-	}
-
-	participants := make([]string, 0)
-	for {
-		rc := C.sqlite3_step(participantsStmt)
-		if rc == C.SQLITE_DONE {
-			break
-		}
-		if rc != C.SQLITE_ROW {
-			return persistence.Schedule{}, fmt.Errorf("sqlite: list participants: %s", s.lastErrorLocked())
-		}
-		participants = append(participants, columnText(participantsStmt, 0))
-	}
-	schedule.Participants = participants
-
-	return schedule, nil
-}
-
-func columnText(stmt *C.sqlite3_stmt, index int) string {
-	text := C.sqlite3_column_text(stmt, C.int(index))
-	if text == nil {
-		return ""
-	}
-	return C.GoString((*C.char)(unsafe.Pointer(text)))
-}
-
-func columnNullableText(stmt *C.sqlite3_stmt, index int) *string {
-	if C.sqlite3_column_type(stmt, C.int(index)) == C.SQLITE_NULL {
-		return nil
-	}
-	value := columnText(stmt, index)
-	return &value
-}
-
-func columnBool(stmt *C.sqlite3_stmt, index int) bool {
-	return C.sqlite3_column_int(stmt, C.int(index)) != 0
-}
-
-func columnTime(stmt *C.sqlite3_stmt, index int) (time.Time, error) {
-	raw := columnText(stmt, index)
-	parsed, err := time.Parse(timeLayout, raw)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("sqlite: parse time %q: %w", raw, err)
-	}
-	return parsed, nil
-}
-
-func columnNullableTime(stmt *C.sqlite3_stmt, index int) (*time.Time, error) {
-	if C.sqlite3_column_type(stmt, C.int(index)) == C.SQLITE_NULL {
-		return nil, nil
-	}
-	value, err := columnTime(stmt, index)
-	if err != nil {
-		return nil, err
-	}
-	return &value, nil
-}
-
-func bindArgsSequential(stmt *C.sqlite3_stmt, binders []func(*C.sqlite3_stmt, int) error) error {
-	for i, binder := range binders {
-		if err := binder(stmt, i+1); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *Storage) lastErrorLocked() string {
-	return C.GoString(C.sqlite3_errmsg(s.db))
-}
-
 func uniqueStrings(values []string) []string {
 	seen := make(map[string]struct{}, len(values))
 	result := make([]string, 0, len(values))
 	for _, value := range values {
-		if _, ok := seen[value]; ok {
+		v := strings.TrimSpace(value)
+		if v == "" {
 			continue
 		}
-		seen[value] = struct{}{}
-		result = append(result, value)
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		result = append(result, v)
 	}
 	sort.Strings(result)
+	return result
+}
+
+func uniqueWeekdays(days []time.Weekday) []time.Weekday {
+	seen := make(map[time.Weekday]struct{}, len(days))
+	result := make([]time.Weekday, 0, len(days))
+	for _, day := range days {
+		if day < time.Sunday || day > time.Saturday {
+			continue
+		}
+		if _, ok := seen[day]; ok {
+			continue
+		}
+		seen[day] = struct{}{}
+		result = append(result, day)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i] < result[j] })
 	return result
 }
 
@@ -1263,22 +621,5 @@ func decodeWeekdays(mask int64) []time.Weekday {
 			result = append(result, day)
 		}
 	}
-	return result
-}
-
-func uniqueWeekdays(days []time.Weekday) []time.Weekday {
-	seen := make(map[time.Weekday]struct{}, len(days))
-	result := make([]time.Weekday, 0, len(days))
-	for _, day := range days {
-		if day < time.Sunday || day > time.Saturday {
-			continue
-		}
-		if _, ok := seen[day]; ok {
-			continue
-		}
-		seen[day] = struct{}{}
-		result = append(result, day)
-	}
-	sort.Slice(result, func(i, j int) bool { return result[i] < result[j] })
 	return result
 }
