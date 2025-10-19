@@ -188,17 +188,18 @@ type listSchedulesResponse struct {
 }
 
 type scheduleDTO struct {
-	ID               string   `json:"id"`
-	CreatorID        string   `json:"creator_id"`
-	Title            string   `json:"title"`
-	Description      string   `json:"description"`
-	Start            string   `json:"start"`
-	End              string   `json:"end"`
-	RoomID           *string  `json:"room_id,omitempty"`
-	WebConferenceURL string   `json:"web_conference_url,omitempty"`
-	ParticipantIDs   []string `json:"participant_ids"`
-	CreatedAt        string   `json:"created_at"`
-	UpdatedAt        string   `json:"updated_at"`
+	ID               string          `json:"id"`
+	CreatorID        string          `json:"creator_id"`
+	Title            string          `json:"title"`
+	Description      string          `json:"description"`
+	Start            string          `json:"start"`
+	End              string          `json:"end"`
+	RoomID           *string         `json:"room_id,omitempty"`
+	WebConferenceURL string          `json:"web_conference_url,omitempty"`
+	ParticipantIDs   []string        `json:"participant_ids"`
+	CreatedAt        string          `json:"created_at"`
+	UpdatedAt        string          `json:"updated_at"`
+	Occurrences      []occurrenceDTO `json:"occurrences,omitempty"`
 }
 
 func toScheduleDTO(schedule application.Schedule) scheduleDTO {
@@ -214,6 +215,7 @@ func toScheduleDTO(schedule application.Schedule) scheduleDTO {
 		ParticipantIDs:   append([]string(nil), schedule.ParticipantIDs...),
 		CreatedAt:        schedule.CreatedAt.UTC().Format(time.RFC3339Nano),
 		UpdatedAt:        schedule.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		Occurrences:      toOccurrenceDTOs(schedule.Occurrences),
 	}
 }
 
@@ -233,6 +235,31 @@ type conflictWarningDTO struct {
 	Type          string  `json:"type"`
 	ParticipantID string  `json:"participant_id,omitempty"`
 	RoomID        *string `json:"room_id,omitempty"`
+}
+
+type occurrenceDTO struct {
+	ScheduleID string `json:"schedule_id"`
+	RuleID     string `json:"rule_id,omitempty"`
+	Start      string `json:"start"`
+	End        string `json:"end"`
+}
+
+func toOccurrenceDTOs(occurrences []application.ScheduleOccurrence) []occurrenceDTO {
+	if len(occurrences) == 0 {
+		return nil
+	}
+
+	out := make([]occurrenceDTO, 0, len(occurrences))
+	for _, occurrence := range occurrences {
+		dto := occurrenceDTO{
+			ScheduleID: occurrence.ScheduleID,
+			RuleID:     occurrence.RuleID,
+			Start:      occurrence.Start.UTC().Format(time.RFC3339Nano),
+			End:        occurrence.End.UTC().Format(time.RFC3339Nano),
+		}
+		out = append(out, dto)
+	}
+	return out
 }
 
 func toWarningDTOs(warnings []application.ConflictWarning) []conflictWarningDTO {
@@ -294,7 +321,11 @@ func buildListParams(values url.Values, principal application.Principal) applica
 	}
 
 	if len(params.ParticipantIDs) == 0 {
-		params.ParticipantIDs = nil
+		if principal.UserID != "" {
+			params.ParticipantIDs = []string{principal.UserID}
+		} else {
+			params.ParticipantIDs = nil
+		}
 	}
 
 	return params
