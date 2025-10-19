@@ -1,74 +1,74 @@
-# Pending Work Before Step 3
+# ステップ3に進む前の保留作業
 
-This list captures the outstanding tasks that must be completed during Steps 1 and 2 (test-first development and implementation/refinement) before advancing to Step 3 (documentation and review).
+このリストは、ステップ3（ドキュメント作成とレビュー）に進む前に、ステップ1とステップ2（テスト先行開発と実装／ブラッシュアップ）で完了させる必要がある未完了タスクをまとめたものです。
 
-## Test Scaffolding (Step 1)
-- [ ] Flesh out failing test skeletons for the Schedule application service methods (`CreateSchedule`, `UpdateSchedule`, `ListSchedules`, `DeleteSchedule`) that cover creator immutability, administrator overrides, validation of start/end windows and required fields (including web conference URL format), verifying participant and room existence, creating schedules on behalf of other users, and allowing hybrid meetings that simultaneously set physical room and web conference information.
-- [ ] Extend Schedule service test scaffolds with cases that assert participant filters, multi-user list views, recurrence expansion hooks, propagation of conflict warnings from the detector, chronological ordering of returned schedules, cleanup of linked recurrences when schedules are updated or deleted, enforcement of JST-only scheduling, translation of day/week/month timeframe filters (`StartsAfter`/`EndsBefore`) into the correct result set, and success paths that still persist updates when conflicts are reported.
-- [ ] Describe `ListSchedules` test scaffolds that ensure the default view (no explicit participant filter) returns only the authenticated user's schedules while explicit participant filters allow viewing colleagues, matching the "My schedule" vs. "Selected colleagues" requirement without leaking unintended records.
-- [ ] Add Schedule service test scaffolds that cover authorization failures for non-creators attempting updates or deletes, administrator override success paths, and consistent `ErrUnauthorized`/`ErrNotFound` propagation for missing schedules.
-- [ ] Add unit-test scaffolds covering `RoomService` CRUD behavior, including administrator-only access constraints and validation of required attributes (name, location, positive capacity).
-- [ ] Capture `RoomService.ListRooms` scaffolds that assert read access is available to all authenticated employees (not only administrators) so schedule creation flows can surface the catalog.
-- [ ] Create unit-test scaffolds for administrator-only user management service methods (`CreateUser`, `UpdateUser`, `ListUsers`, `DeleteUser`) that validate input handling and privilege enforcement.
-- [ ] Draft unit-test scaffolds for the authentication service, including password hashing edge cases, lockout behavior (if retained), session/token issuance flows, and sentinel errors for invalid credentials or disabled accounts.
-- [ ] Tighten conflict detection unit-test scaffolds in `internal/scheduler` to describe overlapping participant and room intervals, identical-ID short-circuit behavior, and non-overlap baselines before wiring services to the detector.
-- [ ] Expand conflict detection scaffolds to cover schedules that simultaneously overlap on both participants and rooms so the detector returns every applicable warning in a single evaluation.
-- [ ] Describe HTTP middleware/component tests that assert session token validation and propagation of the authenticated principal into handler contexts.
-- [ ] Introduce recurrence engine test outlines that describe weekday selection, timezone handling, clipping generated occurrences to requested timeframes, and generated occurrence linking.
-- [ ] Define persistence adapter test scaffolds (repositories for users, schedules, rooms, recurrences, and authentication data), including integration test placeholders using SQLite fixtures, coverage for foreign-key cascades, and translation of uniqueness/lookup violations into sentinel errors.
-- [ ] Extend persistence adapter scaffolds to assert invalid records are rejected (e.g., schedules whose `End` is not after `Start`, rooms with non-positive capacity, recurrences whose `EndsOn` precedes `StartsOn`) and that repositories surface the validation sentinel errors planned for these constraint failures.
-- [ ] Extend persistence adapter scaffolds to assert `GetUserByEmail` performs case-insensitive lookups, repository list operations (`ListUsers`, `ListRooms`, `ScheduleRepository.ListSchedules`) return deterministically ordered results, and schedule participant collections come back sorted/deduplicated.
-- [ ] Add recurrence repository scaffolds that verify `UpsertRecurrence` preserves the original `CreatedAt` timestamp on updates, round-trips `StartsOn`/`EndsOn` boundaries without timezone drift, and that `ListRecurrencesForSchedule` returns rules ordered by creation time.
-- [ ] Expand SQLite storage test scaffolds to capture DSN normalisation, `PRAGMA foreign_keys` enforcement, and transactional rollback semantics currently encoded in `internal/persistence/sqlite` so the pure-Go driver refactor maintains those behaviours.
-- [ ] Add SQLite storage test scaffolds that assert timestamp columns continue to round-trip via UTC `time.RFC3339Nano` text so the database/sql migration does not regress timezone handling or truncate precision.
-- [ ] Extend SQLite storage test scaffolds to cover recurrence weekday bitmask encoding so multi-day selections round-trip between `[]time.Weekday` and the integer column when ported to the pure-Go driver.
-- [ ] Add persistence test scaffolds for session management repositories covering token creation, lookup, expiration, and revocation behavior.
-- [ ] Outline component-test scaffolds for HTTP handlers (authentication, user management, schedules, rooms) to validate request validation, authorization (including 403 responses for non-creators), response shaping, login responses that set session tokens (cookie/header), logout flows that revoke sessions, surfacing of conflict warnings and recurrence-expanded results, and returning localized (Japanese) error and validation messages per the specification.
-- [ ] Add HTTP handler test scaffolds for schedule listing that cover the default personal view, explicit colleague selections, translation of `ErrNotFound`/`ErrUnauthorized` sentinel errors into `404`/`403` responses for missing or forbidden schedule resources, and correct day/week/month query parameter mapping (including Monday-start week windows and default daily time spans) into service timeframe filters.
-- [ ] Capture configuration loader test scaffolds that assert environment variable parsing, default fallback behavior, and validation of required settings (HTTP port, SQLite DSN, session secrets) so Step 2 work can proceed test-first.
+## テストの足場作り（ステップ1）
+- [ ] スケジュールアプリケーションサービスの各メソッド（`CreateSchedule`、`UpdateSchedule`、`ListSchedules`、`DeleteSchedule`）について、作成者の不変性、管理者の上書き、開始／終了時間と必須項目（ウェブ会議URL形式を含む）の検証、参加者と会議室の存在確認、他ユーザーの代理でのスケジュール作成、物理会議室とウェブ会議情報を同時に設定できるハイブリッド会議の許可をカバーする失敗テストの骨組みを充実させる。
+- [ ] スケジュールサービスのテスト骨組みを拡張し、参加者フィルター、複数ユーザーの一覧表示、繰り返し展開フック、検出器からの競合警告伝播、返却されるスケジュールの時系列順序付け、スケジュール更新／削除時の関連する繰り返し設定のクリーンアップ、JST（日本標準時）のみのスケジューリング強制、日／週／月の期間フィルター（`StartsAfter`／`EndsBefore`）を正しい結果セットに変換すること、警告が報告されても更新を永続化する成功パスを確認するケースを追加する。
+- [ ] `ListSchedules` のテスト骨組みを記述し、デフォルトビュー（参加者フィルターが指定されていない場合）が認証済みユーザー自身のスケジュールのみを返す一方で、明示的な参加者フィルターによって同僚のスケジュールを閲覧できるようにし、「自分のスケジュール」と「選択した同僚」の要件に一致しながら意図しないレコードが漏えいしないことを確認する。
+- [ ] 作成者以外が更新や削除を試みた際の認可失敗、管理者の上書き成功パス、存在しないスケジュールに対する `ErrUnauthorized`／`ErrNotFound` の一貫した伝播をカバーするスケジュールサービスのテスト骨組みを追加する。
+- [ ] `RoomService` の CRUD 挙動を対象に、管理者のみアクセス可能な制約と必須属性（名前、所在地、正の収容人数）の検証を含むユニットテスト骨組みを追加する。
+- [ ] スケジュール作成フローが会議室カタログを表示できるよう、`RoomService.ListRooms` の骨組みにおいてすべての認証済み従業員（管理者だけでなく）が読み取りアクセスできることを確認する。
+- [ ] 管理者専用のユーザー管理サービスメソッド（`CreateUser`、`UpdateUser`、`ListUsers`、`DeleteUser`）について、入力処理と権限強制を検証するユニットテスト骨組みを作成する。
+- [ ] 認証サービスのユニットテスト骨組みを作成し、パスワードハッシュのエッジケース、ロックアウト動作（維持する場合）、セッション／トークン発行フロー、無効な資格情報や無効化済みアカウントに対するセンチネルエラーを含める。
+- [ ] `internal/scheduler` の競合検出ユニットテスト骨組みを強化し、参加者および会議室の時間帯重複、同一IDのショートサーキット動作、サービスを検出器に配線する前の非重複のベースラインを記述する。
+- [ ] 参加者と会議室の両方が同時に重複するスケジュールをカバーし、検出器が単一の評価で該当する警告をすべて返すことを確認する競合検出骨組みを拡張する。
+- [ ] HTTP ミドルウェア／コンポーネントテストを記述し、セッショントークン検証と認証済みプリンシパルをハンドラーのコンテキストへ伝播することを確認する。
+- [ ] 平日選択、タイムゾーン処理、要求された期間への生成発生のクリッピング、生成された発生のリンク付けを記述する繰り返しエンジンのテスト概要を導入する。
+- [ ] 永続化アダプター（ユーザー、スケジュール、会議室、繰り返し、認証データのリポジトリ）に関するテスト骨組みを定義し、SQLite フィクスチャを使った統合テストのプレースホルダー、外部キーのカスケードカバレッジ、重複／検索違反のセンチネルエラーへの変換を含める。
+- [ ] `End` が `Start` より後になっていないスケジュール、正の値でない会議室の収容人数、`EndsOn` が `StartsOn` より前の繰り返しなど、無効なレコードをリポジトリが拒否し、それらの制約違反に対する計画済みの検証センチネルエラーを表面化することを主張する永続化アダプター骨組みを拡張する。
+- [ ] `GetUserByEmail` が大文字小文字を区別しない検索を実行し、リポジトリの一覧操作（`ListUsers`、`ListRooms`、`ScheduleRepository.ListSchedules`）が決定論的な順序で結果を返し、スケジュール参加者のコレクションがソート済みで重複が除去されて戻ることを確認する永続化アダプター骨組みを拡張する。
+- [ ] `UpsertRecurrence` が更新時に元の `CreatedAt` タイムスタンプを保持し、`StartsOn`／`EndsOn` の境界をタイムゾーンドリフトなく往復し、`ListRecurrencesForSchedule` がルールを作成順に返すことを検証する繰り返しリポジトリ骨組みを追加する。
+- [ ] `internal/persistence/sqlite` に現在組み込まれている DSN 正規化、`PRAGMA foreign_keys` の強制、トランザクションのロールバックセマンティクスを捉え、純粋な Go ドライバーのリファクタリング後もこれらの挙動が維持されるようにする SQLite ストレージテスト骨組みを拡張する。
+- [ ] タイムスタンプ列が UTC の `time.RFC3339Nano` 形式で往復し続けることを主張し、database/sql への移行でタイムゾーン処理が後退したり精度が切り捨てられたりしないようにする SQLite ストレージテスト骨組みを追加する。
+- [ ] 繰り返しの平日ビットマスクエンコードをカバーし、`[]time.Weekday` と整数列との間で複数日の選択が正しく往復するようにする SQLite ストレージテスト骨組みを拡張する。
+- [ ] トークン作成、検索、期限切れ、取り消し動作をカバーするセッション管理リポジトリ向けの永続化テスト骨組みを追加する。
+- [ ] 認証、ユーザー管理、スケジュール、会議室の HTTP ハンドラーに関するコンポーネントテスト骨組みを概説し、リクエスト検証、認可（非作成者に対する403レスポンスを含む）、レスポンス構成、ログインによるセッショントークンの設定（Cookie／ヘッダー）、ログアウト時のセッション取り消し、競合警告と繰り返し展開結果の提示、仕様に沿ったローカライズされた（日本語の）エラーおよび検証メッセージの返却を検証する。
+- [ ] スケジュール一覧に関する HTTP ハンドラーテスト骨組みを追加し、デフォルトの個人ビュー、明示的な同僚選択、欠落または禁止されたスケジュールリソースに対して `ErrNotFound`／`ErrUnauthorized` をそれぞれ `404`／`403` に変換すること、曜日／週／月のクエリパラメーターのマッピング（週は月曜開始、デフォルトの日次時間範囲を含む）がサービスの期間フィルターへ正しく変換されることを確認する。
+- [ ] 環境変数の解析、デフォルトフォールバック動作、必須設定（HTTP ポート、SQLite DSN、セッションシークレット）の検証を確認する構成ローダーのテスト骨組みを作成し、ステップ2の作業がテストファーストで進められるようにする。
 
-## Implementations to Unblock Green Phase (Step 2)
-- [ ] Wire the existing conflict-detection logic into schedule creation/update flows so conflict warnings surface in service and handler responses while still persisting changes when warnings are present, matching the "warnings don't block" rule.
-- [ ] Implement the application services (`ScheduleService`, `RoomService`, `UserService`, authentication service) as described in the specification, aligning signatures with the test scaffolding.
-- [ ] Ensure application services enforce domain validations (required fields, JST time windows, participant existence, admin-only operations) and return sentinel errors that handlers can translate consistently, including unauthorized attempts to update/delete schedules created by other users.
-- [ ] Implement the persistence layer (`internal/persistence` package) with repositories and migration helpers to satisfy integration tests, covering users, schedules, rooms, recurrences, and session storage, including maintaining the participant join table, participant-based filtering for schedules, and cascading cleanup of recurrence/session rows.
-- [ ] Define session persistence contracts and models in `internal/persistence` (e.g., `SessionRepository`, session structs) so the authentication service and HTTP middleware can depend on explicit interfaces before wiring concrete storage.
-- [ ] Ensure `ScheduleRepository.ListSchedules` combines participant filters and timeframe constraints so multi-user views and day/week/month queries return the correct data set, orders results chronologically, and clips recurrence expansions to the requested window.
-- [ ] Implement the default "my schedule" semantics in `ScheduleService.ListSchedules` so requests without explicit participant filters only return the authenticated user's schedules while honoring colleague selections when provided.
-- [ ] Provide recurrence engine logic that satisfies the outlined recurrence tests.
-- [ ] Extend persistence and application layers with session storage/revocation to back the authentication service's token issuance and expiration semantics that middleware will enforce.
-- [ ] Update the SQLite schema and migration helper to create the session persistence tables and supporting indexes (token lookup, expiry pruning) required by the new repository contracts so authentication/session tests can run against the pure-Go driver.
-- [ ] Persist password hashes for users (schema + repository updates) so that the authentication service can verify credentials securely.
-- [ ] Implement HTTP API handlers and routing that pass the planned component tests, covering authentication (login issuing tokens + logout revocation), user management, schedule CRUD, and room management endpoints, including conflict warning serialization, recurrence-expanded payloads for schedule listing endpoints, translation of sentinel errors into 401/403/404/409 responses per test expectations, and localized Japanese messaging for user-facing errors.
-- [ ] Finalize the HTTP routing map and request/response DTO definitions so handler implementations and tests share stable contracts before production wiring begins.
-- [ ] Implement an environment-driven configuration module (with validation and defaults) consumed by the entry point and dependency wiring, covering HTTP server settings, SQLite DSN, and authentication/session secrets.
-- [ ] Instrument application services and HTTP handlers with structured logging via `log/slog`, including contextual request identifiers and error surfaces, matching the architecture guidance.
-- [ ] Ensure room listing handlers expose catalog data to all authenticated users so schedule creation clients can populate selection lists without administrator privileges.
-- [ ] Wire authentication middleware that consumes the session repository and surfaces domain-specific authorization errors for handlers to translate into HTTP responses, rejecting expired sessions, and returning consistent 401/403 responses per test expectations.
-- [ ] Provide an executable entry point (e.g., `cmd/scheduler`) that wires configuration, repositories, services, and HTTP routing so the API can run end-to-end before documentation begins.
-- [ ] Select and integrate the cgo-free SQLite driver referenced in the architecture overview, ensuring migrations and repository implementations can run in CI environments without CGO dependencies.
-- [ ] Refactor the existing `internal/persistence/sqlite` package to drop the current CGO bindings, porting repository methods and their tests to the selected pure-Go driver so the codebase builds and runs without native SQLite libraries.
-- [ ] Replace the hand-rolled CGO statement helpers in `internal/persistence/sqlite` with a `database/sql` backed implementation provided by the chosen driver, preserving DSN handling (`normalizeDSN`), PRAGMA configuration, participant de-duplication, and transactional integrity checks verified by the expanded tests while configuring the `*sql.DB` connection pool/busy timeout settings and using context-aware query/transaction APIs so concurrency guarantees match the CGO-backed storage.
-- [ ] Ensure the new `database/sql` persistence keeps the current transaction semantics that protect immutable fields (`creator_id`, `created_at`) during schedule updates, maintains case-insensitive email lookups, and retains sorted participant lists so Step 1 ordering/deduplication scaffolds pass.
-- [ ] Port the recurrence repository to `database/sql` while carrying forward the existing `CreatedAt` preservation rules, weekday bitmask encoding, and RFC3339 date storage so tests observing `StartsOn`/`EndsOn` behaviour and ordered listing continue to succeed.
-- [ ] Ensure the new `database/sql` storage preserves the existing UTC `time.RFC3339Nano` timestamp encoding when binding and scanning schedule, recurrence, and session datetimes so downstream services keep consistent time arithmetic.
-- [ ] Reintroduce recurrence weekday encoding/decoding helpers in the pure-Go storage so `[]time.Weekday` values persist as the existing integer bitmask and reload accurately in repository results.
-- [ ] Rework the SQLite migration helper to split and execute the embedded schema statements through `database/sql` since the previous `sqlite3_exec` multi-statement convenience is no longer available once CGO bindings are removed.
-- [ ] Rewrite `internal/persistence/sqlite/sqlite_test.go` (and related fixtures) to exercise the new `database/sql` storage with `CGO_ENABLED=0`, removing the C-based helpers while asserting driver-specific error mapping and transaction behaviour so regression coverage persists after the migration.
-- [ ] Update `go.mod`, imports, and build wiring to rely on the selected pure-Go SQLite driver, remove the legacy `import "C"` surface, and confirm the module builds with `CGO_ENABLED=0`.
-- [ ] Introduce additional persistence sentinel errors (e.g., duplicates, foreign-key violations) in `internal/persistence/errors.go` and ensure repositories map driver errors onto them so services can translate database constraint failures into consistent HTTP responses.
-- [ ] Strengthen the SQLite schema (and its pure-Go migration) with `CHECK` constraints enforcing `end_at > start_at`, positive room capacities, and non-regressive recurrence windows while wiring the new `database/sql` repositories to translate those violations into the validation sentinel errors added above.
-- [ ] Add supporting indexes in the SQLite migrations (participant lookups and start/end timestamps) when porting to the pure-Go driver so participant filters and timeframe queries in `ScheduleRepository.ListSchedules` remain performant.
-- [ ] Produce a Dockerfile with a multi-stage build that outputs the single-scheduler binary described in the architecture plan to smooth later deployment and manual verification.
+## グリーンフェーズを解放するための実装（ステップ2）
+- [ ] 既存の競合検出ロジックをスケジュールの作成／更新フローに組み込み、警告が存在しても変更を永続化しつつ、サービスとハンドラーのレスポンスで競合警告が表面化するようにし、「警告は処理をブロックしない」というルールに一致させる。
+- [ ] 仕様で説明されているとおりにアプリケーションサービス（`ScheduleService`、`RoomService`、`UserService`、認証サービス）を実装し、テスト骨組みとシグネチャを揃える。
+- [ ] アプリケーションサービスがドメイン検証（必須項目、JST 時間枠、参加者の存在、管理者専用操作）を強制し、他ユーザーが作成したスケジュールを更新／削除しようとした場合の認可失敗を含め、ハンドラーが一貫して変換できるセンチネルエラーを返すようにする。
+- [ ] 永続化レイヤー（`internal/persistence` パッケージ）を実装し、ユーザー、スケジュール、会議室、繰り返し、セッションストレージをカバーするリポジトリとマイグレーションヘルパーで統合テストを満たすようにする。参加者結合テーブルの維持、参加者ベースのスケジュールフィルタリング、繰り返し／セッション行のカスケードクリーンアップを含む。
+- [ ] `internal/persistence` にセッション永続化の契約とモデル（例：`SessionRepository`、セッション構造体）を定義し、認証サービスと HTTP ミドルウェアが具体的なストレージを配線する前に明示的なインターフェースへ依存できるようにする。
+- [ ] `ScheduleRepository.ListSchedules` が参加者フィルターと期間制約を組み合わせ、複数ユーザーのビューや日／週／月クエリが正しいデータセットを返し、結果を時系列に整列し、要求された期間に繰り返しの展開をクリップするようにする。
+- [ ] `ScheduleService.ListSchedules` でデフォルトの「自分のスケジュール」セマンティクスを実装し、明示的な参加者フィルターがないリクエストでは認証済みユーザーのスケジュールのみを返し、指定がある場合は同僚の選択を尊重する。
+- [ ] 上記の繰り返しテストを満たす繰り返しエンジンのロジックを提供する。
+- [ ] 永続化層とアプリケーション層を拡張し、セッションストレージ／取り消し機能を実装して認証サービスのトークン発行と失効セマンティクスを支える。
+- [ ] 新しいリポジトリ契約に必要なセッション永続化テーブルとサポート用インデックス（トークン検索、期限切れプルーニング）を作成するよう SQLite スキーマとマイグレーションヘルパーを更新し、認証／セッションテストが純粋な Go ドライバーで実行できるようにする。
+- [ ] パスワードハッシュをユーザーに永続化し（スキーマとリポジトリの更新）、認証サービスが資格情報を安全に検証できるようにする。
+- [ ] HTTP API ハンドラーとルーティングを実装し、計画されたコンポーネントテストに合格するようにする。対象は認証（トークンを発行するログインと取り消すログアウト）、ユーザー管理、スケジュール CRUD、会議室管理エンドポイントであり、競合警告のシリアライズ、スケジュール一覧エンドポイントにおける繰り返し展開されたペイロード、センチネルエラーをテストの期待どおりに 401／403／404／409 レスポンスへ変換すること、ユーザー向けエラーの日本語ローカライズを含む。
+- [ ] HTTP ハンドラーの実装とテストがプロダクション配線に入る前に安定した契約を共有できるよう、HTTP ルーティングマップとリクエスト／レスポンス DTO 定義を確定する。
+- [ ] エントリポイントと依存関係の配線で使用される環境駆動の構成モジュール（検証とデフォルトを含む）を実装し、HTTP サーバー設定、SQLite DSN、認証／セッションシークレットをカバーする。
+- [ ] `log/slog` を用いた構造化ログ出力をアプリケーションサービスと HTTP ハンドラーに組み込み、コンテキスト化されたリクエスト識別子とエラー表示を含め、アーキテクチャガイダンスに合わせる。
+- [ ] 会議室一覧ハンドラーが、管理者権限なしでもすべての認証済みユーザーにカタログデータを公開し、スケジュール作成クライアントが選択リストを生成できるようにする。
+- [ ] セッションリポジトリを利用する認証ミドルウェアを配線し、ハンドラーが HTTP レスポンスへ変換するドメイン固有の認可エラーを表面化し、期限切れセッションを拒否し、テストの期待どおりに一貫した 401／403 レスポンスを返すようにする。
+- [ ] 構成、リポジトリ、サービス、HTTP ルーティングを結線し、ドキュメント作成が始まる前に API をエンドツーエンドで実行できるようにする実行可能なエントリポイント（例：`cmd/scheduler`）を提供する。
+- [ ] アーキテクチャ概要で参照されている CGO 不要の SQLite ドライバーを選定・統合し、CI 環境で CGO 依存なしにマイグレーションとリポジトリ実装が動作するようにする。
+- [ ] 既存の `internal/persistence/sqlite` パッケージをリファクタリングし、現在の CGO バインディングを排除して、選択した純粋な Go ドライバーへリポジトリメソッドとテストを移植し、ネイティブの SQLite ライブラリなしでコードベースがビルド／実行できるようにする。
+- [ ] `internal/persistence/sqlite` の手作り CGO ステートメントヘルパーを、選択したドライバーが提供する `database/sql` バックエンド実装に置き換え、DSN ハンドリング（`normalizeDSN`）、PRAGMA 設定、参加者の重複排除、トランザクション整合性チェックを維持しつつ、`*sql.DB` の接続プール／ビジータイムアウト設定とコンテキスト対応のクエリ／トランザクション API を使用して、CGO バックエンドと同じ同時実行保証を確保する。
+- [ ] 新しい `database/sql` 永続化がスケジュール更新時に不変フィールド（`creator_id`、`created_at`）を保護する既存のトランザクションセマンティクスを維持し、メールアドレスの大文字小文字を区別しない検索、ソート済みの参加者リストを保持して、ステップ1の順序付け／重複排除骨組みを通過させるようにする。
+- [ ] 繰り返しリポジトリを `database/sql` に移植し、既存の `CreatedAt` 保存ルール、曜日ビットマスクエンコード、RFC3339 日付保存を引き継ぎ、`StartsOn`／`EndsOn` の挙動と順序付きリストを観測するテストが引き続き成功するようにする。
+- [ ] 新しい `database/sql` ストレージが、スケジュール、繰り返し、セッションの日時をバインド／スキャンする際に既存の UTC `time.RFC3339Nano` タイムスタンプエンコードを保持し、下流のサービスで時間演算が一貫するようにする。
+- [ ] 純粋な Go ストレージで繰り返しの曜日エンコード／デコードヘルパーを再導入し、`[]time.Weekday` の値が既存の整数ビットマスクとして永続化され、リポジトリ結果で正確に読み戻されるようにする。
+- [ ] CGO バインディングを除去すると `sqlite3_exec` の複数ステートメント便利機能が使えなくなるため、埋め込みスキーマ文を `database/sql` 経由で分割実行するように SQLite マイグレーションヘルパーを書き換える。
+- [ ] `CGO_ENABLED=0` で新しい `database/sql` ストレージを検証し、C ベースヘルパーを削除しつつ、ドライバー固有のエラー対応やトランザクション動作を主張するように `internal/persistence/sqlite/sqlite_test.go`（および関連フィクスチャ）を書き換え、移行後もリグレッションカバレッジを維持する。
+- [ ] `go.mod`、インポート、ビルド配線を更新して選択した純粋な Go SQLite ドライバーに依存させ、従来の `import "C"` を除去し、モジュールが `CGO_ENABLED=0` でビルドできることを確認する。
+- [ ] `internal/persistence/errors.go` に重複や外部キー違反などの追加の永続化センチネルエラーを導入し、リポジトリがドライバーエラーをそれらにマッピングして、サービスがデータベース制約違反を一貫した HTTP レスポンスへ変換できるようにする。
+- [ ] SQLite スキーマ（および純粋な Go マイグレーション）を強化し、`end_at > start_at`、正の会議室収容人数、逆行しない繰り返し期間を強制する `CHECK` 制約を追加し、新しい `database/sql` リポジトリがこれらの違反を上記の検証センチネルエラーへ変換するように配線する。
+- [ ] 参加者フィルターと期間クエリが高性能のままであるよう、純粋な Go ドライバーへ移植する際に SQLite マイグレーションで参加者検索や開始／終了タイムスタンプに対する補助インデックスを追加する。
+- [ ] アーキテクチャ計画で説明されている単一バイナリのスケジューラーを出力するマルチステージビルドの Dockerfile を作成し、後のデプロイや手動検証を円滑にする。
 
-## Supporting Infrastructure
-- [ ] Create reusable deterministic fixtures/builders in `internal/testfixtures` to support the upcoming tests.
-- [ ] Establish a temporary SQLite helper for integration tests (migrations, cleanup) referenced by the persistence test scaffolding.
-- [ ] Introduce dependency injection wiring (even minimal) so that application services can be instantiated in tests without production infrastructure.
-- [ ] Provide a controllable clock/test time helper so schedule, recurrence, and session expiry logic remain deterministic under test.
-- [ ] Establish CI automation (e.g., GitHub Actions) that runs `go test ./...` with the race detector and `golangci-lint`, and commit a baseline `.golangci.yml` aligned with the agreed test strategy while pinning Go 1.22 to match `go.mod`.
-- [ ] Extend CI automation to fail the build when statement coverage for application and persistence packages drops below 80%, matching the coverage target in the test strategy document.
-- [ ] Add a CI job that executes the full test suite with `CGO_ENABLED=0` to guard against regressions that would reintroduce CGO dependencies once the pure-Go SQLite driver is in place.
+## 支援インフラ
+- [ ] 今後のテストを支援するため、`internal/testfixtures` に再利用可能で決定論的なフィクスチャ／ビルダーを作成する。
+- [ ] 永続化テスト骨組みで参照される一時的な SQLite ヘルパー（マイグレーション、クリーンアップ）を整備する。
+- [ ] アプリケーションサービスが本番インフラなしでテスト内でインスタンス化できるよう、（最小限でも）依存性注入の配線を導入する。
+- [ ] スケジュール、繰り返し、セッション期限ロジックがテスト下で決定論的に保たれるよう、制御可能なクロック／テスト時間ヘルパーを提供する。
+- [ ] `go test ./...` の実行、レースデテクタ、`golangci-lint` を走らせる CI 自動化（例：GitHub Actions）を整備し、`go.mod` に合わせて Go 1.22 を固定し、合意されたテスト戦略に沿ったベースライン `.golangci.yml` をコミットする。
+- [ ] アプリケーションおよび永続化パッケージのステートメントカバレッジが 80% を下回った場合にビルドを失敗させる CI 自動化を拡張し、テスト戦略ドキュメントのカバレッジ目標に合わせる。
+- [ ] 純粋な Go SQLite ドライバーが整備された後に CGO 依存が再導入されるリグレッションを防ぐため、`CGO_ENABLED=0` でテストスイート全体を実行する CI ジョブを追加する。
 
-## Status Tracking
-- Update this checklist as work progresses to ensure Step 3 only begins after the above items are implemented and all tests are green.
+## ステータス追跡
+- 作業が進むにつれてこのチェックリストを更新し、上記の項目が実装され、すべてのテストがグリーンになった後にのみステップ3を開始する。
