@@ -160,6 +160,85 @@ func TestScheduleService_CreateSchedule_ValidatesTemporalBounds(t *testing.T) {
 	}
 }
 
+func TestScheduleService_CreateSchedule_RequiresAdminForDifferentCreator(t *testing.T) {
+	t.Parallel()
+
+	repo := &scheduleRepoStub{}
+	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, nil, func() time.Time { return mustJST(t, 9) })
+
+	_, _, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
+		Principal: Principal{UserID: "user-1", IsAdmin: false},
+		Input: ScheduleInput{
+			CreatorID:      "user-2",
+			Title:          "Planning",
+			Start:          mustJST(t, 10),
+			End:            mustJST(t, 11),
+			ParticipantIDs: []string{"user-2"},
+		},
+	})
+
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("expected ErrUnauthorized, got %v", err)
+	}
+}
+
+func TestScheduleService_CreateSchedule_ValidatesParticipantsExist(t *testing.T) {
+	t.Parallel()
+
+	repo := &scheduleRepoStub{}
+	users := &userDirectoryStub{missing: []string{"user-2"}}
+	svc := NewScheduleService(repo, users, &roomCatalogStub{exists: true}, nil, nil, func() time.Time { return mustJST(t, 9) })
+
+	_, _, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
+		Principal: Principal{UserID: "user-1", IsAdmin: true},
+		Input: ScheduleInput{
+			CreatorID:      "user-1",
+			Title:          "Planning",
+			Start:          mustJST(t, 10),
+			End:            mustJST(t, 11),
+			ParticipantIDs: []string{"user-1", "user-2"},
+		},
+	})
+
+	var vErr *ValidationError
+	if !errors.As(err, &vErr) {
+		t.Fatalf("expected ValidationError, got %v", err)
+	}
+
+	if _, ok := vErr.FieldErrors["participants"]; !ok {
+		t.Fatalf("expected participants validation error, got %v", vErr.FieldErrors)
+	}
+}
+
+func TestScheduleService_CreateSchedule_ValidatesRoomExistence(t *testing.T) {
+	t.Parallel()
+
+	repo := &scheduleRepoStub{}
+	roomID := "room-1"
+	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: false}, nil, nil, func() time.Time { return mustJST(t, 9) })
+
+	_, _, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
+		Principal: Principal{UserID: "user-1", IsAdmin: true},
+		Input: ScheduleInput{
+			CreatorID:      "user-1",
+			Title:          "Planning",
+			Start:          mustJST(t, 10),
+			End:            mustJST(t, 11),
+			RoomID:         &roomID,
+			ParticipantIDs: []string{"user-1"},
+		},
+	})
+
+	var vErr *ValidationError
+	if !errors.As(err, &vErr) {
+		t.Fatalf("expected ValidationError, got %v", err)
+	}
+
+	if _, ok := vErr.FieldErrors["room_id"]; !ok {
+		t.Fatalf("expected room_id validation error, got %v", vErr.FieldErrors)
+	}
+}
+
 func TestScheduleService_CreateSchedule_ValidatesRequiredFields(t *testing.T) {
 	t.Parallel()
 
@@ -518,6 +597,81 @@ func TestScheduleService_UpdateSchedule_BlocksUnauthorizedUsers(t *testing.T) {
 
 	if !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("expected ErrUnauthorized, got %v", err)
+	}
+}
+
+func TestScheduleService_UpdateSchedule_ValidatesParticipantsExist(t *testing.T) {
+	t.Parallel()
+
+	existing := Schedule{
+		ID:             "schedule-1",
+		CreatorID:      "user-1",
+		Title:          "Design sync",
+		Start:          mustJST(t, 9),
+		End:            mustJST(t, 10),
+		ParticipantIDs: []string{"user-1"},
+	}
+	repo := &scheduleRepoStub{schedule: existing}
+	users := &userDirectoryStub{missing: []string{"user-2"}}
+	svc := NewScheduleService(repo, users, &roomCatalogStub{exists: true}, nil, nil, func() time.Time { return mustJST(t, 9) })
+
+	_, _, err := svc.UpdateSchedule(context.Background(), UpdateScheduleParams{
+		Principal:  Principal{UserID: "user-1", IsAdmin: true},
+		ScheduleID: "schedule-1",
+		Input: ScheduleInput{
+			CreatorID:      "user-1",
+			Title:          "Design sync",
+			Start:          mustJST(t, 9),
+			End:            mustJST(t, 10),
+			ParticipantIDs: []string{"user-1", "user-2"},
+		},
+	})
+
+	var vErr *ValidationError
+	if !errors.As(err, &vErr) {
+		t.Fatalf("expected ValidationError, got %v", err)
+	}
+
+	if _, ok := vErr.FieldErrors["participants"]; !ok {
+		t.Fatalf("expected participants validation error, got %v", vErr.FieldErrors)
+	}
+}
+
+func TestScheduleService_UpdateSchedule_ValidatesRoomExistence(t *testing.T) {
+	t.Parallel()
+
+	existing := Schedule{
+		ID:             "schedule-1",
+		CreatorID:      "user-1",
+		Title:          "Design sync",
+		Start:          mustJST(t, 9),
+		End:            mustJST(t, 10),
+		ParticipantIDs: []string{"user-1"},
+	}
+	repo := &scheduleRepoStub{schedule: existing}
+	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: false}, nil, nil, func() time.Time { return mustJST(t, 9) })
+
+	roomID := "room-1"
+	_, _, err := svc.UpdateSchedule(context.Background(), UpdateScheduleParams{
+		Principal:  Principal{UserID: "user-1", IsAdmin: true},
+		ScheduleID: "schedule-1",
+		Input: ScheduleInput{
+			CreatorID:      "user-1",
+			Title:          "Design sync",
+			Start:          mustJST(t, 9),
+			End:            mustJST(t, 10),
+			RoomID:         &roomID,
+			ParticipantIDs: []string{"user-1"},
+		},
+	})
+
+	var vErr *ValidationError
+	if !errors.As(err, &vErr) {
+		t.Fatalf("expected ValidationError, got %v", err)
+	}
+
+	if _, ok := vErr.FieldErrors["room_id"]; !ok {
+		t.Fatalf("expected room_id validation error, got %v", vErr.FieldErrors)
 	}
 }
 

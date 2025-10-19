@@ -7,6 +7,8 @@ var (
 	ErrUnauthorized = errors.New("application: unauthorized")
 	// ErrNotFound is returned when the requested resource does not exist.
 	ErrNotFound = errors.New("application: not found")
+	// ErrAlreadyExists is returned when attempting to create a resource that already exists.
+	ErrAlreadyExists = errors.New("application: already exists")
 	// ErrInvalidCredentials indicates authentication failed due to incorrect credentials.
 	ErrInvalidCredentials = errors.New("application: invalid credentials")
 	// ErrAccountDisabled indicates the user account has been disabled.
