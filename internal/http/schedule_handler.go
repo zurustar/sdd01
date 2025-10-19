@@ -22,10 +22,19 @@ type scheduleService interface {
 type ScheduleHandler struct {
 	service   scheduleService
 	responder responder
+	logger    *slog.Logger
 }
 
 func NewScheduleHandler(service scheduleService, logger *slog.Logger) *ScheduleHandler {
-	return &ScheduleHandler{service: service, responder: newResponder(logger)}
+	base := defaultLogger(logger)
+	return &ScheduleHandler{service: service, responder: newResponder(base), logger: base}
+}
+
+func (h *ScheduleHandler) log(ctx context.Context, operation string, attrs ...any) *slog.Logger {
+	if h == nil {
+		return slog.Default()
+	}
+	return handlerLogger(ctx, h.logger, "ScheduleHandler", operation, attrs...)
 }
 
 func (h *ScheduleHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -36,21 +45,26 @@ func (h *ScheduleHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	var req scheduleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.log(r.Context(), "Create", "error_kind", "bad_request").ErrorContext(r.Context(), "failed to decode schedule request", "error", err)
 		h.responder.writeError(r.Context(), w, http.StatusBadRequest, errBadRequestBody)
 		return
 	}
 
 	principal, _ := PrincipalFromContext(r.Context())
 
+	logger := h.log(r.Context(), "Create", "principal_id", principal.UserID)
+
 	schedule, warnings, err := h.service.CreateSchedule(r.Context(), application.CreateScheduleParams{
 		Principal: principal,
 		Input:     req.toInput(),
 	})
 	if err != nil {
+		logger.ErrorContext(r.Context(), "schedule creation failed", "error", err, "error_kind", application.ErrorKind(err))
 		h.responder.handleServiceError(r.Context(), w, err)
 		return
 	}
 
+	logger.With("schedule_id", schedule.ID, "warning_count", len(warnings)).InfoContext(r.Context(), "schedule created")
 	h.renderSchedule(r.Context(), w, schedule, warnings, http.StatusCreated)
 }
 
@@ -62,17 +76,21 @@ func (h *ScheduleHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	scheduleID, ok := ScheduleIDFromContext(r.Context())
 	if !ok || strings.TrimSpace(scheduleID) == "" {
+		h.log(r.Context(), "Update", "error_kind", "bad_request").ErrorContext(r.Context(), "missing schedule id for update")
 		h.responder.writeError(r.Context(), w, http.StatusBadRequest, errInvalidScheduleID)
 		return
 	}
 
 	var req scheduleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.log(r.Context(), "Update", "schedule_id", scheduleID, "error_kind", "bad_request").ErrorContext(r.Context(), "failed to decode schedule update", "error", err)
 		h.responder.writeError(r.Context(), w, http.StatusBadRequest, errBadRequestBody)
 		return
 	}
 
 	principal, _ := PrincipalFromContext(r.Context())
+
+	logger := h.log(r.Context(), "Update", "principal_id", principal.UserID, "schedule_id", scheduleID)
 
 	schedule, warnings, err := h.service.UpdateSchedule(r.Context(), application.UpdateScheduleParams{
 		Principal:  principal,
@@ -80,10 +98,12 @@ func (h *ScheduleHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Input:      req.toInput(),
 	})
 	if err != nil {
+		logger.ErrorContext(r.Context(), "schedule update failed", "error", err, "error_kind", application.ErrorKind(err))
 		h.responder.handleServiceError(r.Context(), w, err)
 		return
 	}
 
+	logger.With("schedule_id", schedule.ID, "warning_count", len(warnings)).InfoContext(r.Context(), "schedule updated")
 	h.renderSchedule(r.Context(), w, schedule, warnings, http.StatusOK)
 }
 
@@ -95,16 +115,20 @@ func (h *ScheduleHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	scheduleID, ok := ScheduleIDFromContext(r.Context())
 	if !ok || strings.TrimSpace(scheduleID) == "" {
+		h.log(r.Context(), "Delete", "error_kind", "bad_request").ErrorContext(r.Context(), "missing schedule id for delete")
 		h.responder.writeError(r.Context(), w, http.StatusBadRequest, errInvalidScheduleID)
 		return
 	}
 
 	principal, _ := PrincipalFromContext(r.Context())
+	logger := h.log(r.Context(), "Delete", "principal_id", principal.UserID, "schedule_id", scheduleID)
 	if err := h.service.DeleteSchedule(r.Context(), principal, scheduleID); err != nil {
+		logger.ErrorContext(r.Context(), "schedule delete failed", "error", err, "error_kind", application.ErrorKind(err))
 		h.responder.handleServiceError(r.Context(), w, err)
 		return
 	}
 
+	logger.InfoContext(r.Context(), "schedule deleted")
 	h.responder.writeJSON(r.Context(), w, http.StatusNoContent, nil)
 }
 
@@ -117,8 +141,10 @@ func (h *ScheduleHandler) List(w http.ResponseWriter, r *http.Request) {
 	principal, _ := PrincipalFromContext(r.Context())
 	params := buildListParams(r.URL.Query(), principal)
 
+	logger := h.log(r.Context(), "List", "principal_id", principal.UserID)
 	schedules, warnings, err := h.service.ListSchedules(r.Context(), params)
 	if err != nil {
+		logger.ErrorContext(r.Context(), "schedule list failed", "error", err, "error_kind", application.ErrorKind(err))
 		h.responder.handleServiceError(r.Context(), w, err)
 		return
 	}
@@ -128,6 +154,7 @@ func (h *ScheduleHandler) List(w http.ResponseWriter, r *http.Request) {
 		Warnings:  toWarningDTOs(warnings),
 	}
 
+	logger.With("result_count", len(schedules), "warning_count", len(warnings)).InfoContext(r.Context(), "schedules listed")
 	h.responder.writeJSON(r.Context(), w, http.StatusOK, response)
 }
 

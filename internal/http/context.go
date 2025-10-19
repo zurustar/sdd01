@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"github.com/example/enterprise-scheduler/internal/application"
+	"github.com/example/enterprise-scheduler/internal/logging"
 )
 
 type contextKey string
@@ -14,7 +15,6 @@ const (
 	scheduleIDContextKey contextKey = "schedule_id"
 	userIDContextKey     contextKey = "user_id"
 	roomIDContextKey     contextKey = "room_id"
-	loggerContextKey     contextKey = "logger"
 )
 
 // ContextWithPrincipal returns a derived context containing the authenticated principal.
@@ -63,11 +63,13 @@ func RoomIDFromContext(ctx context.Context) (string, bool) {
 
 // ContextWithLogger attaches a request scoped logger to the context.
 func ContextWithLogger(ctx context.Context, logger *slog.Logger) context.Context {
-	return context.WithValue(ctx, loggerContextKey, logger)
+	return logging.ContextWithLogger(ctx, logger)
 }
 
 // LoggerFromContext retrieves the request scoped logger if present.
 func LoggerFromContext(ctx context.Context) *slog.Logger {
-	logger, _ := ctx.Value(loggerContextKey).(*slog.Logger)
-	return logger
+	if logger := logging.FromContext(ctx); logger != nil {
+		return logger
+	}
+	return nil
 }

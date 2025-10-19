@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/mail"
 	"sort"
 	"strings"
@@ -26,35 +27,59 @@ type UserService struct {
 	users       UserRepository
 	idGenerator func() string
 	now         func() time.Time
+	logger      *slog.Logger
 }
 
 // NewUserService wires dependencies for the user service.
 func NewUserService(users UserRepository, idGenerator func() string, now func() time.Time) *UserService {
+	return NewUserServiceWithLogger(users, idGenerator, now, nil)
+}
+
+// NewUserServiceWithLogger wires dependencies for the user service and accepts a logger.
+func NewUserServiceWithLogger(users UserRepository, idGenerator func() string, now func() time.Time, logger *slog.Logger) *UserService {
 	if idGenerator == nil {
 		idGenerator = func() string { return "" }
 	}
 	if now == nil {
 		now = time.Now
 	}
-	return &UserService{users: users, idGenerator: idGenerator, now: now}
+	return &UserService{users: users, idGenerator: idGenerator, now: now, logger: defaultLogger(logger)}
+}
+
+func (s *UserService) loggerWith(ctx context.Context, operation string, attrs ...any) *slog.Logger {
+	return serviceLogger(ctx, s.logger, "UserService", operation, attrs...)
 }
 
 // CreateUser validates input and persists a new user for administrators.
-func (s *UserService) CreateUser(ctx context.Context, params CreateUserParams) (User, error) {
+func (s *UserService) CreateUser(ctx context.Context, params CreateUserParams) (user User, err error) {
 	if s == nil {
-		return User{}, fmt.Errorf("UserService is nil")
+		err = fmt.Errorf("UserService is nil")
+		return
 	}
+	logger := s.loggerWith(ctx, "CreateUser",
+		"principal_id", params.Principal.UserID,
+	)
+	defer func() {
+		if err != nil {
+			logger.ErrorContext(ctx, "failed to create user", "error", err, "error_kind", ErrorKind(err))
+			return
+		}
+		logger.With("user_id", user.ID).InfoContext(ctx, "user created")
+	}()
+
 	if !params.Principal.IsAdmin {
-		return User{}, ErrUnauthorized
+		err = ErrUnauthorized
+		return
 	}
 
 	normalized := normalizeUserInput(params.Input)
 	vErr := validateUserInput(normalized)
 	if vErr.HasErrors() {
-		return User{}, vErr
+		err = vErr
+		return
 	}
 
-	user := User{
+	user = User{
 		ID:          s.idGenerator(),
 		Email:       normalized.Email,
 		DisplayName: normalized.DisplayName,
@@ -64,52 +89,72 @@ func (s *UserService) CreateUser(ctx context.Context, params CreateUserParams) (
 	user.UpdatedAt = user.CreatedAt
 
 	if s.users == nil {
-		return user, nil
+		return
 	}
 
-	persisted, err := s.users.CreateUser(ctx, user)
+	var persisted User
+	persisted, err = s.users.CreateUser(ctx, user)
 	if err != nil {
-		return User{}, mapUserRepoError(err)
+		err = mapUserRepoError(err)
+		return
 	}
 
-	return persisted, nil
+	user = persisted
+	return
 }
 
 // UpdateUser validates input and updates an existing user for administrators.
-func (s *UserService) UpdateUser(ctx context.Context, params UpdateUserParams) (User, error) {
+func (s *UserService) UpdateUser(ctx context.Context, params UpdateUserParams) (user User, err error) {
 	if s == nil {
-		return User{}, fmt.Errorf("UserService is nil")
+		err = fmt.Errorf("UserService is nil")
+		return
 	}
 	if !params.Principal.IsAdmin {
-		return User{}, ErrUnauthorized
+		err = ErrUnauthorized
+		return
 	}
 	if s.users == nil {
-		return User{}, fmt.Errorf("user repository not configured")
+		err = fmt.Errorf("user repository not configured")
+		return
 	}
 
-	existing, err := s.users.GetUser(ctx, params.UserID)
+	logger := s.loggerWith(ctx, "UpdateUser",
+		"principal_id", params.Principal.UserID,
+		"user_id", params.UserID,
+	)
+	defer func() {
+		if err != nil {
+			logger.ErrorContext(ctx, "failed to update user", "error", err, "error_kind", ErrorKind(err))
+			return
+		}
+		logger.With("user_id", user.ID).InfoContext(ctx, "user updated")
+	}()
+
+	user, err = s.users.GetUser(ctx, params.UserID)
 	if err != nil {
-		return User{}, mapUserRepoError(err)
+		err = mapUserRepoError(err)
+		return
 	}
 
 	normalized := normalizeUserInput(params.Input)
 	vErr := validateUserInput(normalized)
 	if vErr.HasErrors() {
-		return User{}, vErr
+		err = vErr
+		return
 	}
 
-	updated := existing
-	updated.Email = normalized.Email
-	updated.DisplayName = normalized.DisplayName
-	updated.IsAdmin = normalized.IsAdmin
-	updated.UpdatedAt = s.now()
+	user.Email = normalized.Email
+	user.DisplayName = normalized.DisplayName
+	user.IsAdmin = normalized.IsAdmin
+	user.UpdatedAt = s.now()
 
-	persisted, err := s.users.UpdateUser(ctx, updated)
+	user, err = s.users.UpdateUser(ctx, user)
 	if err != nil {
-		return User{}, mapUserRepoError(err)
+		err = mapUserRepoError(err)
+		return
 	}
 
-	return persisted, nil
+	return
 }
 
 // DeleteUser removes a user when requested by an administrator.
@@ -124,41 +169,63 @@ func (s *UserService) DeleteUser(ctx context.Context, principal Principal, userI
 		return fmt.Errorf("user repository not configured")
 	}
 
+	logger := s.loggerWith(ctx, "DeleteUser",
+		"principal_id", principal.UserID,
+		"user_id", userID,
+	)
+
 	if err := s.users.DeleteUser(ctx, userID); err != nil {
-		return mapUserRepoError(err)
+		err = mapUserRepoError(err)
+		logger.ErrorContext(ctx, "failed to delete user", "error", err, "error_kind", ErrorKind(err))
+		return err
 	}
 
+	logger.InfoContext(ctx, "user deleted")
 	return nil
 }
 
 // ListUsers returns all users for administrators.
-func (s *UserService) ListUsers(ctx context.Context, principal Principal) ([]User, error) {
+func (s *UserService) ListUsers(ctx context.Context, principal Principal) (users []User, err error) {
 	if s == nil {
-		return nil, fmt.Errorf("UserService is nil")
+		err = fmt.Errorf("UserService is nil")
+		return
 	}
 	if !principal.IsAdmin {
-		return nil, ErrUnauthorized
+		err = ErrUnauthorized
+		return
 	}
 	if s.users == nil {
 		return nil, nil
 	}
 
-	users, err := s.users.ListUsers(ctx)
+	logger := s.loggerWith(ctx, "ListUsers",
+		"principal_id", principal.UserID,
+	)
+	defer func() {
+		if err != nil {
+			logger.ErrorContext(ctx, "failed to list users", "error", err, "error_kind", ErrorKind(err))
+			return
+		}
+		logger.With("result_count", len(users)).InfoContext(ctx, "users listed")
+	}()
+
+	var raw []User
+	raw, err = s.users.ListUsers(ctx)
 	if err != nil {
-		return nil, err
+		return
 	}
 
-	out := make([]User, len(users))
-	copy(out, users)
+	users = make([]User, len(raw))
+	copy(users, raw)
 
-	sort.Slice(out, func(i, j int) bool {
-		if strings.EqualFold(out[i].Email, out[j].Email) {
-			return out[i].ID < out[j].ID
+	sort.Slice(users, func(i, j int) bool {
+		if strings.EqualFold(users[i].Email, users[j].Email) {
+			return users[i].ID < users[j].ID
 		}
-		return strings.ToLower(out[i].Email) < strings.ToLower(out[j].Email)
+		return strings.ToLower(users[i].Email) < strings.ToLower(users[j].Email)
 	})
 
-	return out, nil
+	return
 }
 
 func normalizeUserInput(input UserInput) UserInput {
