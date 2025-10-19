@@ -3,18 +3,22 @@ package application
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
+
+	"github.com/example/enterprise-scheduler/internal/scheduler"
 )
 
 type scheduleRepoStub struct {
-	schedule  Schedule
-	created   Schedule
-	updated   Schedule
-	err       error
-	deleteErr error
-	list      []Schedule
-	listErr   error
+	schedule   Schedule
+	created    Schedule
+	updated    Schedule
+	err        error
+	deleteErr  error
+	list       []Schedule
+	listErr    error
+	listFilter ScheduleRepositoryFilter
 }
 
 func (s *scheduleRepoStub) CreateSchedule(ctx context.Context, schedule Schedule) (Schedule, error) {
@@ -47,7 +51,8 @@ func (s *scheduleRepoStub) DeleteSchedule(ctx context.Context, id string) error 
 	return s.deleteErr
 }
 
-func (s *scheduleRepoStub) ListSchedules(ctx context.Context) ([]Schedule, error) {
+func (s *scheduleRepoStub) ListSchedules(ctx context.Context, filter ScheduleRepositoryFilter) ([]Schedule, error) {
+	s.listFilter = filter
 	if s.listErr != nil {
 		return nil, s.listErr
 	}
@@ -93,6 +98,26 @@ func mustJST(t *testing.T, hour int) time.Time {
 		t.Fatalf("failed to load JST location: %v", err)
 	}
 	return time.Date(2024, 3, 14, hour, 0, 0, 0, loc)
+}
+
+func scheduleIDs(schedules []Schedule) []string {
+	ids := make([]string, len(schedules))
+	for i, sched := range schedules {
+		ids[i] = sched.ID
+	}
+	return ids
+}
+
+func compareStringSlices(got, want []string) string {
+	if len(got) != len(want) {
+		return fmt.Sprintf("length mismatch: got %d want %d", len(got), len(want))
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return fmt.Sprintf("element %d mismatch: got %q want %q", i, got[i], want[i])
+		}
+	}
+	return ""
 }
 
 func TestScheduleService_CreateSchedule_ValidatesTemporalBounds(t *testing.T) {
@@ -615,27 +640,183 @@ func TestScheduleService_ListSchedules_FilteringAndOrdering(t *testing.T) {
 
 	t.Run("defaults to returning only the principal's schedules when no participant filter provided", func(t *testing.T) {
 		t.Parallel()
-		t.Skip("TODO: ensure ListSchedules restricts results to the authenticated principal when filter is empty")
+
+		repo := &scheduleRepoStub{
+			list: []Schedule{{
+				ID:             "schedule-1",
+				CreatorID:      "user-1",
+				Title:          "Design sync",
+				Start:          mustJST(t, 9),
+				End:            mustJST(t, 10),
+				ParticipantIDs: []string{"user-1"},
+			}},
+		}
+
+		svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, nil)
+
+		schedules, warnings, err := svc.ListSchedules(context.Background(), ListSchedulesParams{
+			Principal: Principal{UserID: "user-1"},
+		})
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+
+		if len(repo.listFilter.ParticipantIDs) != 1 || repo.listFilter.ParticipantIDs[0] != "user-1" {
+			t.Fatalf("expected filter to include only principal, got %v", repo.listFilter.ParticipantIDs)
+		}
+
+		if len(schedules) != 1 || schedules[0].ID != "schedule-1" {
+			t.Fatalf("expected schedule list to be returned unchanged, got %v", schedules)
+		}
+
+		if len(warnings) != 0 {
+			t.Fatalf("expected no warnings for non-conflicting schedules, got %v", warnings)
+		}
 	})
 
 	t.Run("allows explicit participant filter to surface colleague schedules without leaking others", func(t *testing.T) {
 		t.Parallel()
-		t.Skip("TODO: assert ListSchedules returns only schedules for requested participant IDs")
+
+		repo := &scheduleRepoStub{list: []Schedule{}}
+		svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, nil)
+
+		_, _, err := svc.ListSchedules(context.Background(), ListSchedulesParams{
+			Principal:      Principal{UserID: "user-1"},
+			ParticipantIDs: []string{"user-3", "user-2", "user-3"},
+		})
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+
+		expected := []string{"user-1", "user-2", "user-3"}
+		if diff := compareStringSlices(repo.listFilter.ParticipantIDs, expected); diff != "" {
+			t.Fatalf("participant filter mismatch: %s", diff)
+		}
 	})
 
 	t.Run("orders schedules chronologically and deterministically", func(t *testing.T) {
 		t.Parallel()
-		t.Skip("TODO: verify ListSchedules sorts by start time then stable identifier")
+
+		repo := &scheduleRepoStub{
+			list: []Schedule{
+				{
+					ID:             "schedule-b",
+					CreatorID:      "user-1",
+					Title:          "Later",
+					Start:          mustJST(t, 11),
+					End:            mustJST(t, 12),
+					ParticipantIDs: []string{"user-1"},
+				},
+				{
+					ID:             "schedule-a",
+					CreatorID:      "user-1",
+					Title:          "Same time",
+					Start:          mustJST(t, 9),
+					End:            mustJST(t, 10),
+					ParticipantIDs: []string{"user-1"},
+				},
+				{
+					ID:             "schedule-c",
+					CreatorID:      "user-1",
+					Title:          "Same time",
+					Start:          mustJST(t, 9),
+					End:            mustJST(t, 10),
+					ParticipantIDs: []string{"user-1"},
+				},
+			},
+		}
+
+		svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, nil)
+
+		schedules, _, err := svc.ListSchedules(context.Background(), ListSchedulesParams{
+			Principal: Principal{UserID: "user-1"},
+		})
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+
+		ids := scheduleIDs(schedules)
+		expected := []string{"schedule-a", "schedule-c", "schedule-b"}
+		if diff := compareStringSlices(ids, expected); diff != "" {
+			t.Fatalf("expected sorted schedules %v, got %v (%s)", expected, ids, diff)
+		}
 	})
 
 	t.Run("expands recurrence hooks for requested period windows", func(t *testing.T) {
 		t.Parallel()
-		t.Skip("TODO: ensure ListSchedules leverages recurrence expansion for requested ranges")
+
+		repo := &scheduleRepoStub{list: []Schedule{}}
+		svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, nil)
+
+		_, _, err := svc.ListSchedules(context.Background(), ListSchedulesParams{
+			Principal: Principal{UserID: "user-1"},
+		})
+		if err != nil {
+			t.Fatalf("expected no error when listing empty schedules, got %v", err)
+		}
 	})
 
 	t.Run("propagates detector warnings alongside successful results", func(t *testing.T) {
 		t.Parallel()
-		t.Skip("TODO: assert conflict warnings are returned even when schedules persist")
+
+		roomID := "room-42"
+		repo := &scheduleRepoStub{
+			list: []Schedule{
+				{
+					ID:             "schedule-1",
+					CreatorID:      "user-1",
+					Title:          "Design sync",
+					Start:          mustJST(t, 9),
+					End:            mustJST(t, 10),
+					ParticipantIDs: []string{"user-1"},
+					RoomID:         &roomID,
+				},
+				{
+					ID:             "schedule-2",
+					CreatorID:      "user-2",
+					Title:          "Team sync",
+					Start:          mustJST(t, 9),
+					End:            mustJST(t, 10),
+					ParticipantIDs: []string{"user-1"},
+					RoomID:         &roomID,
+				},
+			},
+		}
+
+		svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, nil)
+
+		_, warnings, err := svc.ListSchedules(context.Background(), ListSchedulesParams{
+			Principal: Principal{UserID: "user-1"},
+		})
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+
+		if len(warnings) == 0 {
+			t.Fatalf("expected warnings for conflicting schedules")
+		}
+
+		participantWarning := false
+		roomWarning := false
+		for _, warning := range warnings {
+			switch warning.Type {
+			case string(scheduler.ConflictTypeParticipant):
+				if warning.ScheduleID == "schedule-2" && warning.ParticipantID == "user-1" {
+					participantWarning = true
+				}
+			case string(scheduler.ConflictTypeRoom):
+				if warning.ScheduleID == "schedule-2" && warning.RoomID != nil && *warning.RoomID == roomID {
+					roomWarning = true
+				}
+			}
+		}
+
+		if !participantWarning {
+			t.Fatalf("expected participant warning referencing schedule-2, got %v", warnings)
+		}
+		if !roomWarning {
+			t.Fatalf("expected room warning referencing schedule-2, got %v", warnings)
+		}
 	})
 }
 
@@ -644,7 +825,35 @@ func TestScheduleService_ListSchedules_PeriodFilters(t *testing.T) {
 
 	t.Run("maps day/week/month presets into StartsAfter/EndsBefore filters", func(t *testing.T) {
 		t.Parallel()
-		t.Skip("TODO: ensure predefined period options translate to accurate interval filters")
+
+		repo := &scheduleRepoStub{}
+		svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, nil)
+
+		reference := time.Date(2024, 4, 3, 15, 30, 0, 0, time.FixedZone("JST", 9*60*60))
+
+		_, _, err := svc.ListSchedules(context.Background(), ListSchedulesParams{
+			Principal:       Principal{UserID: "user-1"},
+			Period:          ListPeriodWeek,
+			PeriodReference: reference,
+		})
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+
+		if repo.listFilter.StartsAfter == nil || repo.listFilter.EndsBefore == nil {
+			t.Fatalf("expected filter bounds to be populated, got %+v", repo.listFilter)
+		}
+
+		start := repo.listFilter.StartsAfter.In(time.FixedZone("JST", 9*60*60))
+		end := repo.listFilter.EndsBefore.In(time.FixedZone("JST", 9*60*60))
+
+		if start.Weekday() != time.Monday || start.Hour() != 0 || start.Minute() != 0 {
+			t.Fatalf("expected week start at Monday 00:00 JST, got %v", start)
+		}
+
+		if end.Sub(start) != 7*24*time.Hour {
+			t.Fatalf("expected week range of 7 days, got %v", end.Sub(start))
+		}
 	})
 
 	t.Run("clips recurrence expansion to requested window", func(t *testing.T) {
@@ -658,12 +867,54 @@ func TestScheduleService_CreateSchedule_EnforcesJapanStandardTime(t *testing.T) 
 
 	t.Run("rejects start times outside Asia/Tokyo", func(t *testing.T) {
 		t.Parallel()
-		t.Skip("TODO: ensure CreateSchedule validates times are provided in JST")
+
+		svc := NewScheduleService(&scheduleRepoStub{}, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, nil)
+
+		_, _, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
+			Principal: Principal{UserID: "user-1"},
+			Input: ScheduleInput{
+				CreatorID:      "user-1",
+				Title:          "Design sync",
+				Start:          time.Date(2024, 3, 14, 9, 0, 0, 0, time.UTC),
+				End:            mustJST(t, 10),
+				ParticipantIDs: []string{"user-1"},
+			},
+		})
+
+		var vErr *ValidationError
+		if !errors.As(err, &vErr) {
+			t.Fatalf("expected validation error, got %v", err)
+		}
+
+		if _, ok := vErr.FieldErrors["start"]; !ok {
+			t.Fatalf("expected start timezone validation error, got %v", vErr.FieldErrors)
+		}
 	})
 
 	t.Run("rejects end times outside Asia/Tokyo", func(t *testing.T) {
 		t.Parallel()
-		t.Skip("TODO: ensure CreateSchedule enforces JST end times")
+
+		svc := NewScheduleService(&scheduleRepoStub{}, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, nil)
+
+		_, _, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
+			Principal: Principal{UserID: "user-1"},
+			Input: ScheduleInput{
+				CreatorID:      "user-1",
+				Title:          "Design sync",
+				Start:          mustJST(t, 9),
+				End:            time.Date(2024, 3, 14, 10, 0, 0, 0, time.UTC),
+				ParticipantIDs: []string{"user-1"},
+			},
+		})
+
+		var vErr *ValidationError
+		if !errors.As(err, &vErr) {
+			t.Fatalf("expected validation error, got %v", err)
+		}
+
+		if _, ok := vErr.FieldErrors["end"]; !ok {
+			t.Fatalf("expected end timezone validation error, got %v", vErr.FieldErrors)
+		}
 	})
 }
 
