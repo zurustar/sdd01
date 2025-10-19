@@ -178,6 +178,87 @@ func TestScheduleHandlers(t *testing.T) {
 		}
 	})
 
+	t.Run("serialize conflict warnings in update responses", func(t *testing.T) {
+		t.Parallel()
+
+		roomID := "room-99"
+		warnings := []application.ConflictWarning{
+			{ScheduleID: "existing-3", Type: "participant", ParticipantID: "user-5"},
+			{ScheduleID: "existing-4", Type: "room", RoomID: &roomID},
+		}
+
+		service := &fakeScheduleService{
+			updateScheduleFunc: func(ctx context.Context, params application.UpdateScheduleParams) (application.Schedule, []application.ConflictWarning, error) {
+				return application.Schedule{
+					ID:               params.ScheduleID,
+					CreatorID:        params.Principal.UserID,
+					Title:            params.Input.Title,
+					Description:      params.Input.Description,
+					Start:            params.Input.Start,
+					End:              params.Input.End,
+					RoomID:           params.Input.RoomID,
+					WebConferenceURL: params.Input.WebConferenceURL,
+					ParticipantIDs:   params.Input.ParticipantIDs,
+					CreatedAt:        mustParse(t, "2024-04-01T00:00:00Z"),
+					UpdatedAt:        mustParse(t, "2024-04-02T00:00:00Z"),
+				}, warnings, nil
+			},
+		}
+
+		handler := NewScheduleHandler(service)
+
+		payload := map[string]any{
+			"title":              "Weekly sync",
+			"description":        "Project update",
+			"start":              "2024-04-02T01:00:00Z",
+			"end":                "2024-04-02T02:00:00Z",
+			"participant_ids":    []string{"user-1", "user-5"},
+			"web_conference_url": "https://meet.example.com/rooms/456",
+		}
+
+		body, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("failed to marshal payload: %v", err)
+		}
+
+		req := httptest.NewRequest(http.MethodPut, "/schedules/schedule-1", bytes.NewReader(body))
+		ctx := ContextWithPrincipal(req.Context(), application.Principal{UserID: "user-1"})
+		ctx = ContextWithScheduleID(ctx, "schedule-1")
+		req = req.WithContext(ctx)
+		recorder := httptest.NewRecorder()
+
+		handler.Update(recorder, req)
+
+		res := recorder.Result()
+		t.Cleanup(func() { _ = res.Body.Close() })
+
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("expected status 200 OK, got %d", res.StatusCode)
+		}
+
+		var decoded scheduleResponse
+		if err := json.NewDecoder(res.Body).Decode(&decoded); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+
+		if len(decoded.Warnings) != len(warnings) {
+			t.Fatalf("expected %d warnings, got %d", len(warnings), len(decoded.Warnings))
+		}
+
+		warningByType := map[string]conflictWarningDTO{}
+		for _, warning := range decoded.Warnings {
+			warningByType[warning.Type] = warning
+		}
+
+		if participant, ok := warningByType["participant"]; !ok || participant.ParticipantID != "user-5" {
+			t.Fatalf("expected participant warning for user-5, got %v", participant)
+		}
+
+		if room, ok := warningByType["room"]; !ok || room.RoomID == nil || *room.RoomID != roomID {
+			t.Fatalf("expected room warning for %s, got %v", roomID, room.RoomID)
+		}
+	})
+
 	t.Run("expand recurrences in list responses", func(t *testing.T) {
 		t.Parallel()
 		t.Skip("TODO: ensure GET /schedules includes expanded occurrences")
