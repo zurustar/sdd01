@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/example/enterprise-scheduler/internal/scheduler"
 )
 
 // ScheduleRepository captures the persistence interactions needed by the service.
@@ -16,6 +18,7 @@ type ScheduleRepository interface {
 	GetSchedule(ctx context.Context, id string) (Schedule, error)
 	UpdateSchedule(ctx context.Context, schedule Schedule) (Schedule, error)
 	DeleteSchedule(ctx context.Context, id string) error
+	ListSchedules(ctx context.Context) ([]Schedule, error)
 }
 
 // UserDirectory exposes user lookup operations.
@@ -55,9 +58,9 @@ func NewScheduleService(schedules ScheduleRepository, users UserDirectory, rooms
 }
 
 // CreateSchedule validates the request before delegating to persistence.
-func (s *ScheduleService) CreateSchedule(ctx context.Context, params CreateScheduleParams) (Schedule, error) {
+func (s *ScheduleService) CreateSchedule(ctx context.Context, params CreateScheduleParams) (Schedule, []ConflictWarning, error) {
 	if s == nil {
-		return Schedule{}, fmt.Errorf("ScheduleService is nil")
+		return Schedule{}, nil, fmt.Errorf("ScheduleService is nil")
 	}
 	input := params.Input
 	principal := params.Principal
@@ -67,7 +70,7 @@ func (s *ScheduleService) CreateSchedule(ctx context.Context, params CreateSched
 	}
 
 	if input.CreatorID != principal.UserID && !principal.IsAdmin {
-		return Schedule{}, ErrUnauthorized
+		return Schedule{}, nil, ErrUnauthorized
 	}
 
 	vErr := &ValidationError{}
@@ -75,19 +78,19 @@ func (s *ScheduleService) CreateSchedule(ctx context.Context, params CreateSched
 	validateScheduleCore(input, vErr)
 
 	if vErr.HasErrors() {
-		return Schedule{}, vErr
+		return Schedule{}, nil, vErr
 	}
 
 	if err := s.ensureParticipantsExist(ctx, append(uniqueStrings(input.ParticipantIDs), input.CreatorID)); err != nil {
 		var inner *ValidationError
 		if errors.As(err, &inner) {
-			return Schedule{}, err
+			return Schedule{}, nil, err
 		}
-		return Schedule{}, err
+		return Schedule{}, nil, err
 	}
 
 	if err := s.ensureRoomExists(ctx, input.RoomID); err != nil {
-		return Schedule{}, err
+		return Schedule{}, nil, err
 	}
 
 	createdAt := s.now()
@@ -106,34 +109,44 @@ func (s *ScheduleService) CreateSchedule(ctx context.Context, params CreateSched
 	}
 
 	if s.schedules == nil {
-		return schedule, nil
+		return schedule, nil, nil
 	}
 
-	return s.schedules.CreateSchedule(ctx, schedule)
+	warnings, err := s.detectConflicts(ctx, schedule)
+	if err != nil {
+		return Schedule{}, nil, err
+	}
+
+	persisted, err := s.schedules.CreateSchedule(ctx, schedule)
+	if err != nil {
+		return Schedule{}, nil, err
+	}
+
+	return persisted, warnings, nil
 }
 
 // UpdateSchedule applies validation and authorization before updating persistence state.
-func (s *ScheduleService) UpdateSchedule(ctx context.Context, params UpdateScheduleParams) (Schedule, error) {
+func (s *ScheduleService) UpdateSchedule(ctx context.Context, params UpdateScheduleParams) (Schedule, []ConflictWarning, error) {
 	if s == nil {
-		return Schedule{}, fmt.Errorf("ScheduleService is nil")
+		return Schedule{}, nil, fmt.Errorf("ScheduleService is nil")
 	}
 	if s.schedules == nil {
-		return Schedule{}, fmt.Errorf("schedule repository not configured")
+		return Schedule{}, nil, fmt.Errorf("schedule repository not configured")
 	}
 
 	existing, err := s.schedules.GetSchedule(ctx, params.ScheduleID)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			return Schedule{}, ErrNotFound
+			return Schedule{}, nil, ErrNotFound
 		}
-		return Schedule{}, err
+		return Schedule{}, nil, err
 	}
 
 	principal := params.Principal
 	input := params.Input
 
 	if existing.CreatorID != principal.UserID && !principal.IsAdmin {
-		return Schedule{}, ErrUnauthorized
+		return Schedule{}, nil, ErrUnauthorized
 	}
 
 	vErr := &ValidationError{}
@@ -145,19 +158,19 @@ func (s *ScheduleService) UpdateSchedule(ctx context.Context, params UpdateSched
 	validateScheduleCore(input, vErr)
 
 	if vErr.HasErrors() {
-		return Schedule{}, vErr
+		return Schedule{}, nil, vErr
 	}
 
 	if err := s.ensureParticipantsExist(ctx, append(uniqueStrings(input.ParticipantIDs), existing.CreatorID)); err != nil {
 		var inner *ValidationError
 		if errors.As(err, &inner) {
-			return Schedule{}, err
+			return Schedule{}, nil, err
 		}
-		return Schedule{}, err
+		return Schedule{}, nil, err
 	}
 
 	if err := s.ensureRoomExists(ctx, input.RoomID); err != nil {
-		return Schedule{}, err
+		return Schedule{}, nil, err
 	}
 
 	updated := existing
@@ -170,7 +183,17 @@ func (s *ScheduleService) UpdateSchedule(ctx context.Context, params UpdateSched
 	updated.ParticipantIDs = sortStrings(uniqueStrings(input.ParticipantIDs))
 	updated.UpdatedAt = s.now()
 
-	return s.schedules.UpdateSchedule(ctx, updated)
+	warnings, err := s.detectConflicts(ctx, updated)
+	if err != nil {
+		return Schedule{}, nil, err
+	}
+
+	persisted, err := s.schedules.UpdateSchedule(ctx, updated)
+	if err != nil {
+		return Schedule{}, nil, err
+	}
+
+	return persisted, warnings, nil
 }
 
 // DeleteSchedule ensures authorization before delegating to persistence.
@@ -228,6 +251,64 @@ func (s *ScheduleService) ensureRoomExists(ctx context.Context, roomID *string) 
 	vErr := &ValidationError{}
 	vErr.add("room_id", "room does not exist")
 	return vErr
+}
+
+func (s *ScheduleService) detectConflicts(ctx context.Context, candidate Schedule) ([]ConflictWarning, error) {
+	if s == nil || s.schedules == nil {
+		return nil, nil
+	}
+
+	schedules, err := s.schedules.ListSchedules(ctx)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	existing := make([]scheduler.Schedule, 0, len(schedules))
+	for _, sched := range schedules {
+		existing = append(existing, toSchedulerSchedule(sched))
+	}
+
+	conflicts := scheduler.DetectConflicts(existing, toSchedulerSchedule(candidate))
+	return toConflictWarnings(conflicts), nil
+}
+
+func toSchedulerSchedule(schedule Schedule) scheduler.Schedule {
+	participants := make([]string, len(schedule.ParticipantIDs))
+	copy(participants, schedule.ParticipantIDs)
+
+	return scheduler.Schedule{
+		ID:           schedule.ID,
+		Participants: participants,
+		RoomID:       schedule.RoomID,
+		Start:        schedule.Start,
+		End:          schedule.End,
+	}
+}
+
+func toConflictWarnings(conflicts []scheduler.Conflict) []ConflictWarning {
+	if len(conflicts) == 0 {
+		return nil
+	}
+
+	warnings := make([]ConflictWarning, 0, len(conflicts))
+	for _, conflict := range conflicts {
+		warning := ConflictWarning{
+			ScheduleID: conflict.WithScheduleID,
+			Type:       string(conflict.Type),
+		}
+		if conflict.Participant != "" {
+			warning.ParticipantID = conflict.Participant
+		}
+		if conflict.RoomID != nil {
+			roomID := *conflict.RoomID
+			warning.RoomID = &roomID
+		}
+		warnings = append(warnings, warning)
+	}
+	return warnings
 }
 
 func validateScheduleCore(input ScheduleInput, vErr *ValidationError) {
