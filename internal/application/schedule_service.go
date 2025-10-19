@@ -18,7 +18,14 @@ type ScheduleRepository interface {
 	GetSchedule(ctx context.Context, id string) (Schedule, error)
 	UpdateSchedule(ctx context.Context, schedule Schedule) (Schedule, error)
 	DeleteSchedule(ctx context.Context, id string) error
-	ListSchedules(ctx context.Context) ([]Schedule, error)
+	ListSchedules(ctx context.Context, filter ScheduleRepositoryFilter) ([]Schedule, error)
+}
+
+// ScheduleRepositoryFilter narrows queries issued to the schedule repository.
+type ScheduleRepositoryFilter struct {
+	ParticipantIDs []string
+	StartsAfter    *time.Time
+	EndsBefore     *time.Time
 }
 
 // UserDirectory exposes user lookup operations.
@@ -220,6 +227,39 @@ func (s *ScheduleService) DeleteSchedule(ctx context.Context, principal Principa
 	return s.schedules.DeleteSchedule(ctx, scheduleID)
 }
 
+// ListSchedules enumerates schedules visible to the requesting principal.
+func (s *ScheduleService) ListSchedules(ctx context.Context, params ListSchedulesParams) ([]Schedule, []ConflictWarning, error) {
+	if s == nil {
+		return nil, nil, fmt.Errorf("ScheduleService is nil")
+	}
+	if s.schedules == nil {
+		return nil, nil, fmt.Errorf("schedule repository not configured")
+	}
+
+	filter := s.buildListFilter(params)
+
+	schedules, err := s.schedules.ListSchedules(ctx, filter)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil, nil, nil
+		}
+		return nil, nil, err
+	}
+
+	ordered := make([]Schedule, len(schedules))
+	copy(ordered, schedules)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if ordered[i].Start.Equal(ordered[j].Start) {
+			return ordered[i].ID < ordered[j].ID
+		}
+		return ordered[i].Start.Before(ordered[j].Start)
+	})
+
+	warnings := detectListConflicts(ordered)
+
+	return ordered, warnings, nil
+}
+
 func (s *ScheduleService) ensureParticipantsExist(ctx context.Context, ids []string) error {
 	if s.users == nil {
 		return nil
@@ -258,7 +298,7 @@ func (s *ScheduleService) detectConflicts(ctx context.Context, candidate Schedul
 		return nil, nil
 	}
 
-	schedules, err := s.schedules.ListSchedules(ctx)
+	schedules, err := s.schedules.ListSchedules(ctx, ScheduleRepositoryFilter{})
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return nil, nil
@@ -318,10 +358,14 @@ func validateScheduleCore(input ScheduleInput, vErr *ValidationError) {
 
 	if input.Start.IsZero() {
 		vErr.add("start", "start is required")
+	} else if !isJapanStandardTime(input.Start) {
+		vErr.add("start", "start must be in Asia/Tokyo (JST)")
 	}
 
 	if input.End.IsZero() {
 		vErr.add("end", "end is required")
+	} else if !isJapanStandardTime(input.End) {
+		vErr.add("end", "end must be in Asia/Tokyo (JST)")
 	}
 
 	if !input.Start.IsZero() && !input.End.IsZero() && !input.Start.Before(input.End) {
@@ -360,4 +404,120 @@ func sortStrings(values []string) []string {
 	copy(out, values)
 	sort.Strings(out)
 	return out
+}
+
+func (s *ScheduleService) buildListFilter(params ListSchedulesParams) ScheduleRepositoryFilter {
+	participants := make([]string, 0, len(params.ParticipantIDs)+1)
+	participants = append(participants, params.ParticipantIDs...)
+	if params.Principal.UserID != "" {
+		participants = append(participants, params.Principal.UserID)
+	}
+	participants = sortStrings(uniqueStrings(participants))
+	if len(participants) == 0 {
+		participants = nil
+	}
+
+	startsAfter := params.StartsAfter
+	endsBefore := params.EndsBefore
+
+	if params.Period != ListPeriodNone {
+		start, end := computePeriodRange(params.Period, params.PeriodReference)
+		if startsAfter == nil {
+			startsAfter = &start
+		}
+		if endsBefore == nil {
+			endsBefore = &end
+		}
+	}
+
+	return ScheduleRepositoryFilter{
+		ParticipantIDs: participants,
+		StartsAfter:    startsAfter,
+		EndsBefore:     endsBefore,
+	}
+}
+
+func computePeriodRange(period ListPeriod, reference time.Time) (time.Time, time.Time) {
+	switch period {
+	case ListPeriodDay:
+		start := startOfDay(reference)
+		return start, start.AddDate(0, 0, 1)
+	case ListPeriodWeek:
+		start := startOfWeek(reference)
+		return start, start.AddDate(0, 0, 7)
+	case ListPeriodMonth:
+		start := startOfMonth(reference)
+		return start, start.AddDate(0, 1, 0)
+	default:
+		return time.Time{}, time.Time{}
+	}
+}
+
+func startOfDay(t time.Time) time.Time {
+	loc := jstLocation()
+	inJST := t.In(loc)
+	return time.Date(inJST.Year(), inJST.Month(), inJST.Day(), 0, 0, 0, 0, loc)
+}
+
+func startOfWeek(t time.Time) time.Time {
+	start := startOfDay(t)
+	weekday := int(start.Weekday())
+	// Adjust so Monday is start of week. In Go, Monday == 1, Sunday == 0.
+	offset := (weekday + 6) % 7
+	return start.AddDate(0, 0, -offset)
+}
+
+func startOfMonth(t time.Time) time.Time {
+	start := startOfDay(t)
+	return time.Date(start.Year(), start.Month(), 1, 0, 0, 0, 0, start.Location())
+}
+
+func jstLocation() *time.Location {
+	return time.FixedZone("JST", 9*60*60)
+}
+
+func isJapanStandardTime(t time.Time) bool {
+	if t.IsZero() {
+		return false
+	}
+	name, offset := t.Zone()
+	if offset != 9*60*60 {
+		return false
+	}
+	if name == "Asia/Tokyo" || name == "JST" {
+		return true
+	}
+	if loc := t.Location(); loc != nil {
+		if loc.String() == "Asia/Tokyo" || loc.String() == "JST" {
+			return true
+		}
+	}
+	return false
+}
+
+func detectListConflicts(schedules []Schedule) []ConflictWarning {
+	if len(schedules) <= 1 {
+		return nil
+	}
+
+	warnings := make([]ConflictWarning, 0)
+	converted := make([]scheduler.Schedule, len(schedules))
+	for i, sched := range schedules {
+		converted[i] = toSchedulerSchedule(sched)
+	}
+
+	for i, candidate := range schedules {
+		if i+1 >= len(schedules) {
+			break
+		}
+		existing := converted[i+1:]
+		conflicts := scheduler.DetectConflicts(existing, toSchedulerSchedule(candidate))
+		warnings = append(warnings, toConflictWarnings(conflicts)...)
+	}
+
+	if len(warnings) == 0 {
+		return nil
+	}
+
+	return warnings
 }

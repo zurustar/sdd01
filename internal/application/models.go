@@ -56,6 +56,30 @@ type UpdateScheduleParams struct {
 	Input      ScheduleInput
 }
 
+// ListPeriod identifies the range preset requested for schedule listings.
+type ListPeriod string
+
+const (
+	// ListPeriodNone indicates no preset; caller supplied explicit bounds.
+	ListPeriodNone ListPeriod = ""
+	// ListPeriodDay constrains results to a single day.
+	ListPeriodDay ListPeriod = "day"
+	// ListPeriodWeek constrains results to the Monday-start week containing the reference time.
+	ListPeriodWeek ListPeriod = "week"
+	// ListPeriodMonth constrains results to the month containing the reference time.
+	ListPeriodMonth ListPeriod = "month"
+)
+
+// ListSchedulesParams wraps the data required to list schedules.
+type ListSchedulesParams struct {
+	Principal       Principal
+	ParticipantIDs  []string
+	StartsAfter     *time.Time
+	EndsBefore      *time.Time
+	Period          ListPeriod
+	PeriodReference time.Time
+}
+
 // RoomInput captures caller provided room fields.
 type RoomInput struct {
 	Name       string
