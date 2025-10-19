@@ -33,6 +33,15 @@ type Schedule struct {
 	ParticipantIDs   []string
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
+	Occurrences      []ScheduleOccurrence
+}
+
+// ScheduleOccurrence represents an expanded occurrence generated from a recurrence rule.
+type ScheduleOccurrence struct {
+	ScheduleID string
+	RuleID     string
+	Start      time.Time
+	End        time.Time
 }
 
 // ConflictWarning describes a scheduling conflict that should be surfaced to callers.
