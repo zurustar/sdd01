@@ -2,6 +2,7 @@ package http
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -100,18 +101,81 @@ func TestScheduleHandlers(t *testing.T) {
 
 	t.Run("serialize conflict warnings in responses", func(t *testing.T) {
 		t.Parallel()
-		t.Skip("TODO: ensure conflict warnings are included in JSON payloads")
 
-		conflict := map[string]any{"conflicts": []map[string]any{{"type": "room", "resource_id": "room-1"}}}
-		_ = conflict
+		roomID := "room-1"
+		warnings := []application.ConflictWarning{
+			{ScheduleID: "existing-1", Type: "participant", ParticipantID: "user-2"},
+			{ScheduleID: "existing-2", Type: "room", RoomID: &roomID},
+		}
 
+		service := &fakeScheduleService{
+			createScheduleFunc: func(ctx context.Context, params application.CreateScheduleParams) (application.Schedule, []application.ConflictWarning, error) {
+				return application.Schedule{
+					ID:               "schedule-new",
+					CreatorID:        params.Principal.UserID,
+					Title:            params.Input.Title,
+					Description:      params.Input.Description,
+					Start:            params.Input.Start,
+					End:              params.Input.End,
+					RoomID:           params.Input.RoomID,
+					WebConferenceURL: params.Input.WebConferenceURL,
+					ParticipantIDs:   params.Input.ParticipantIDs,
+					CreatedAt:        mustParse(t, "2024-04-01T00:00:00Z"),
+					UpdatedAt:        mustParse(t, "2024-04-01T00:00:00Z"),
+				}, warnings, nil
+			},
+		}
+
+		handler := NewScheduleHandler(service)
+
+		payload := map[string]any{
+			"title":              "Design sync",
+			"description":        "Discuss roadmap",
+			"start":              "2024-04-01T01:00:00Z",
+			"end":                "2024-04-01T02:00:00Z",
+			"participant_ids":    []string{"user-1", "user-2"},
+			"web_conference_url": "https://meet.example.com/rooms/123",
+		}
+
+		body, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("failed to marshal payload: %v", err)
+		}
+
+		req := httptest.NewRequest(http.MethodPost, "/schedules", bytes.NewReader(body))
+		req = req.WithContext(ContextWithPrincipal(req.Context(), application.Principal{UserID: "user-1"}))
 		recorder := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/schedules", bytes.NewBufferString(`{}`))
 
-		_ = req
-		_ = recorder
+		handler.Create(recorder, req)
 
-		// TODO: configure fake service returning warnings slice and ensure response JSON includes them under `warnings`
+		res := recorder.Result()
+		t.Cleanup(func() { _ = res.Body.Close() })
+
+		if res.StatusCode != http.StatusCreated {
+			t.Fatalf("expected status 201 Created, got %d", res.StatusCode)
+		}
+
+		var decoded scheduleResponse
+		if err := json.NewDecoder(res.Body).Decode(&decoded); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+
+		if len(decoded.Warnings) != len(warnings) {
+			t.Fatalf("expected %d warnings, got %d", len(warnings), len(decoded.Warnings))
+		}
+
+		warningByType := map[string]conflictWarningDTO{}
+		for _, warning := range decoded.Warnings {
+			warningByType[warning.Type] = warning
+		}
+
+		if participant, ok := warningByType["participant"]; !ok || participant.ParticipantID != "user-2" {
+			t.Fatalf("expected participant warning for user-2, got %v", participant)
+		}
+
+		if room, ok := warningByType["room"]; !ok || room.RoomID == nil || *room.RoomID != roomID {
+			t.Fatalf("expected room warning for %s, got %v", roomID, room.RoomID)
+		}
 	})
 
 	t.Run("expand recurrences in list responses", func(t *testing.T) {
@@ -227,4 +291,35 @@ func TestRoomHandlers(t *testing.T) {
 
 		// TODO: expect 403 for non-admin mutation attempts and 201 for admin principal
 	})
+}
+
+type fakeScheduleService struct {
+	createScheduleFunc func(context.Context, application.CreateScheduleParams) (application.Schedule, []application.ConflictWarning, error)
+	updateScheduleFunc func(context.Context, application.UpdateScheduleParams) (application.Schedule, []application.ConflictWarning, error)
+}
+
+func (f *fakeScheduleService) CreateSchedule(ctx context.Context, params application.CreateScheduleParams) (application.Schedule, []application.ConflictWarning, error) {
+	if f.createScheduleFunc != nil {
+		return f.createScheduleFunc(ctx, params)
+	}
+	return application.Schedule{}, nil, nil
+}
+
+func (f *fakeScheduleService) UpdateSchedule(ctx context.Context, params application.UpdateScheduleParams) (application.Schedule, []application.ConflictWarning, error) {
+	if f.updateScheduleFunc != nil {
+		return f.updateScheduleFunc(ctx, params)
+	}
+	return application.Schedule{}, nil, nil
+}
+
+func mustParse(t *testing.T, value string) time.Time {
+	t.Helper()
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		parsed, err = time.Parse(time.RFC3339, value)
+	}
+	if err != nil {
+		t.Fatalf("failed to parse time %s: %v", value, err)
+	}
+	return parsed
 }
