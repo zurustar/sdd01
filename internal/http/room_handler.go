@@ -137,7 +137,12 @@ func (h *RoomHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	principal, _ := PrincipalFromContext(r.Context())
+	principal, ok := PrincipalFromContext(r.Context())
+	if !ok || strings.TrimSpace(principal.UserID) == "" {
+		h.log(r.Context(), "List", "error_kind", "unauthorized").ErrorContext(r.Context(), "missing authenticated principal")
+		h.responder.writeError(r.Context(), w, http.StatusUnauthorized, errMissingSessionToken)
+		return
+	}
 	logger := h.log(r.Context(), "List", "principal_id", principal.UserID)
 	rooms, err := h.service.ListRooms(r.Context(), principal)
 	if err != nil {

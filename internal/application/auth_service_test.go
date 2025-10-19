@@ -277,6 +277,106 @@ func TestAuthService_RevokeSession(t *testing.T) {
 	})
 }
 
+func TestAuthService_ValidateSession(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns principal for active session", func(t *testing.T) {
+		t.Parallel()
+
+		now := time.Now().UTC()
+		creds := &credentialStoreStub{credentials: UserCredentials{User: User{ID: "user-1", IsAdmin: true}}}
+		repo := newSessionRepositoryStub()
+		repo.seed(Session{ID: "session-1", UserID: "user-1", Token: "token", ExpiresAt: now.Add(time.Hour), UpdatedAt: now, CreatedAt: now})
+		svc := NewAuthService(creds, repo, nil, nil, func() time.Time { return now }, time.Hour)
+
+		principal, err := svc.ValidateSession(context.Background(), " token ")
+		if err != nil {
+			t.Fatalf("ValidateSession failed: %v", err)
+		}
+
+		if principal.UserID != "user-1" || !principal.IsAdmin {
+			t.Fatalf("unexpected principal: %#v", principal)
+		}
+	})
+
+	t.Run("rejects expired sessions", func(t *testing.T) {
+		t.Parallel()
+
+		now := time.Now().UTC()
+		creds := &credentialStoreStub{credentials: UserCredentials{User: User{ID: "user-1"}}}
+		repo := newSessionRepositoryStub()
+		repo.seed(Session{ID: "session-1", UserID: "user-1", Token: "token", ExpiresAt: now.Add(-time.Minute), UpdatedAt: now, CreatedAt: now})
+		svc := NewAuthService(creds, repo, nil, nil, func() time.Time { return now }, time.Hour)
+
+		_, err := svc.ValidateSession(context.Background(), "token")
+		if !errors.Is(err, ErrSessionExpired) {
+			t.Fatalf("expected ErrSessionExpired, got %v", err)
+		}
+	})
+
+	t.Run("rejects revoked sessions", func(t *testing.T) {
+		t.Parallel()
+
+		now := time.Now().UTC()
+		revoked := now.Add(-time.Minute)
+		creds := &credentialStoreStub{credentials: UserCredentials{User: User{ID: "user-1"}}}
+		repo := newSessionRepositoryStub()
+		repo.seed(Session{ID: "session-1", UserID: "user-1", Token: "token", ExpiresAt: now.Add(time.Hour), RevokedAt: &revoked, UpdatedAt: now, CreatedAt: now})
+		svc := NewAuthService(creds, repo, nil, nil, func() time.Time { return now }, time.Hour)
+
+		_, err := svc.ValidateSession(context.Background(), "token")
+		if !errors.Is(err, ErrSessionRevoked) {
+			t.Fatalf("expected ErrSessionRevoked, got %v", err)
+		}
+	})
+
+	t.Run("rejects empty tokens", func(t *testing.T) {
+		t.Parallel()
+
+		now := time.Now().UTC()
+		creds := &credentialStoreStub{credentials: UserCredentials{User: User{ID: "user-1"}}}
+		repo := newSessionRepositoryStub()
+		repo.seed(Session{ID: "session-1", UserID: "user-1", Token: "token", ExpiresAt: now.Add(time.Hour), UpdatedAt: now, CreatedAt: now})
+		svc := NewAuthService(creds, repo, nil, nil, func() time.Time { return now }, time.Hour)
+
+		_, err := svc.ValidateSession(context.Background(), "  ")
+		if !errors.Is(err, ErrInvalidCredentials) {
+			t.Fatalf("expected ErrInvalidCredentials, got %v", err)
+		}
+	})
+
+	t.Run("returns unauthorized when user record is missing", func(t *testing.T) {
+		t.Parallel()
+
+		now := time.Now().UTC()
+		creds := &credentialStoreStub{credentials: UserCredentials{User: User{ID: "other"}}}
+		repo := newSessionRepositoryStub()
+		repo.seed(Session{ID: "session-1", UserID: "user-1", Token: "token", ExpiresAt: now.Add(time.Hour), UpdatedAt: now, CreatedAt: now})
+		svc := NewAuthService(creds, repo, nil, nil, func() time.Time { return now }, time.Hour)
+
+		_, err := svc.ValidateSession(context.Background(), "token")
+		if !errors.Is(err, ErrUnauthorized) {
+			t.Fatalf("expected ErrUnauthorized, got %v", err)
+		}
+	})
+
+	t.Run("propagates repository failures", func(t *testing.T) {
+		t.Parallel()
+
+		now := time.Now().UTC()
+		expected := errors.New("boom")
+		creds := &credentialStoreStub{credentials: UserCredentials{User: User{ID: "user-1"}}}
+		repo := newSessionRepositoryStub()
+		repo.getErr = expected
+		svc := NewAuthService(creds, repo, nil, nil, func() time.Time { return now }, time.Hour)
+
+		_, err := svc.ValidateSession(context.Background(), "token")
+		if !errors.Is(err, expected) {
+			t.Fatalf("expected %v, got %v", expected, err)
+		}
+	})
+}
+
 // credentialStoreStub implements CredentialStore for tests.
 type credentialStoreStub struct {
 	credentials UserCredentials
@@ -291,6 +391,16 @@ func (c *credentialStoreStub) GetUserCredentialsByEmail(ctx context.Context, ema
 		return UserCredentials{}, ErrNotFound
 	}
 	return c.credentials, nil
+}
+
+func (c *credentialStoreStub) GetUser(ctx context.Context, id string) (User, error) {
+	if c.err != nil {
+		return User{}, c.err
+	}
+	if c.credentials.User.ID == id {
+		return c.credentials.User, nil
+	}
+	return User{}, ErrNotFound
 }
 
 // sessionRepositoryStub provides an in-memory implementation of SessionRepository for tests.
