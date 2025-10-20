@@ -6,10 +6,10 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/example/enterprise-scheduler/internal/application"
+	"github.com/google/uuid"
 )
 
 type SessionValidator interface {
@@ -71,8 +71,11 @@ func RequireSession(validator SessionValidator, logger *slog.Logger) func(http.H
 				return
 			}
 
-			audit.With("principal_id", principal.UserID).InfoContext(r.Context(), "session validated")
+			audit = audit.With("user_id", principal.UserID)
+			audit.InfoContext(r.Context(), "session validated")
+
 			ctx := ContextWithPrincipal(r.Context(), principal)
+			ctx = ContextWithLogger(ctx, audit)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -82,13 +85,18 @@ func RequestLogger(base *slog.Logger) func(http.Handler) http.Handler {
 	if base == nil {
 		base = slog.Default()
 	}
-	var counter atomic.Uint64
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			id := counter.Add(1)
+			requestID := r.Header.Get("X-Request-ID")
+			if requestID == "" {
+				requestID = uuid.NewString()
+			}
+
+			w.Header().Set("X-Request-ID", requestID)
+
 			logger := base.With(
-				"request_id", id,
+				"request_id", requestID,
 				"method", r.Method,
 				"path", r.URL.Path,
 			)
@@ -96,8 +104,29 @@ func RequestLogger(base *slog.Logger) func(http.Handler) http.Handler {
 			ctx := ContextWithLogger(r.Context(), logger)
 			start := time.Now()
 			logger.InfoContext(ctx, "request started")
-			next.ServeHTTP(w, r.WithContext(ctx))
-			logger.InfoContext(ctx, "request completed", "duration", time.Since(start))
+
+			ww := &responseWriter{ResponseWriter: w}
+			next.ServeHTTP(ww, r.WithContext(ctx))
+
+			latency := time.Since(start)
+			logger.InfoContext(ctx, "request completed", "status", ww.status, "bytes", ww.bytes, "duration", latency)
 		})
 	}
+}
+
+type responseWriter struct {
+	http.ResponseWriter
+	status int
+	bytes  int
+}
+
+func (w *responseWriter) WriteHeader(statusCode int) {
+	w.status = statusCode
+	w.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (w *responseWriter) Write(p []byte) (int, error) {
+	n, err := w.ResponseWriter.Write(p)
+	w.bytes += n
+	return n, err
 }

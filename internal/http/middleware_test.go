@@ -115,7 +115,7 @@ func TestSessionMiddleware(t *testing.T) {
 		entries := parseLogEntries(t, buf)
 		var found bool
 		for _, entry := range entries {
-			if entry["middleware"] == "RequireSession" && entry["principal_id"] == principal.UserID {
+			if entry["middleware"] == "RequireSession" && entry["user_id"] == principal.UserID {
 				found = true
 			}
 		}
