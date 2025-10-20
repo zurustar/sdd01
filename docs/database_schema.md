@@ -78,20 +78,14 @@ SQLite (modernc.org/sqlite) を前提としたスキーマの初期ドラフト�
 - `recurrences.type` が `weekly` の場合、`weekdays` JSON 配列長チェックはアプリ層で実施。
 
 ## マイグレーション手順
-1. `internal/storage/sqlite/migrations` ディレクトリにバージョン番号付き SQL ファイルを配置。
-2. Go 実装では `database/sql` + `modernc.org/sqlite` を使用し、`db.Exec` でトランザクションを張って適用。
-3. マイグレーション履歴テーブル `schema_migrations(version TEXT PRIMARY KEY, applied_at TEXT)` を作成。
-4. 新しいマイグレーション適用時は:
-   ```sql
-   BEGIN;
-   -- migration body
-   INSERT INTO schema_migrations(version, applied_at) VALUES (?, CURRENT_TIMESTAMP);
-   COMMIT;
-   ```
-5. ロールバックが必要な場合は対応する `down` ファイルを用意する（MVP では up のみ運用）。
+1. `internal/persistence/sqlite/migrations` ディレクトリに `<version>_<name>.up.sql/.down.sql` を配置。
+2. Go 実装では `database/sql` + `modernc.org/sqlite` を使用し、`cmd/scheduler` 起動時に順次適用する。
+3. 適用済みバージョンは `<dsn>.migrations.json` にタイムスタンプ付きで記録し、リトライ時は未適用分のみを実行する。
+4. `scripts/backup.sh` 実行前にマイグレーション状態ファイルもバックアップ対象に含める。
+5. ロールバックが必要な場合は対応する `down` ファイルを用意し、手動で適用する（MVP では up のみ運用）。
 
 ## バックアップ方針（MVP）
-- SQLite ファイルを 1 日 1 回停止時間中にコピー。
-- Docker 運用時はボリュームをホストにマウントし、`sqlite3 .backup` コマンドで取得。
-- 復旧手順: サービス停止 → バックアップファイルを置換 → サービス再起動 → `GET /healthz` で確認。
+- `scripts/backup.sh` を cron に登録し、毎日 1 回バックアップ（保持 7 世代）を取得。
+- Docker 運用時はボリュームをマウントしたホスト側でスクリプトを実行し、`.sqlite3.gz` を保管。
+- 復旧手順: サービス停止 → `scripts/restore.sh` で指定のバックアップから復旧 → 再起動後に `GET /healthz` で確認。
 
