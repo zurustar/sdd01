@@ -8,9 +8,17 @@
 - [ ] ログアウト（トークン失効）と管理者向け失効 API を公開し、トークン漏洩リスクへの対策を強化する。【F:docs/authentication_authorization.md†L30-L36】【F:docs/step4_handoff.md†L11-L13】
 
 ## グループB: 永続化・マイグレーション
-- [ ] `internal/persistence/sqlite` に `database/sql` ベースのリポジトリを実装し、仕様通りのスキーマ制約と外部キーを適用する。【F:docs/database_schema.md†L3-L78】【F:docs/architecture_overview.md†L31-L52】
-- [ ] マイグレーション runner を整備し、`schema_migrations` テーブルと up スクリプト適用フローを `cmd/scheduler` 起動シーケンスへ組み込む。【F:docs/database_schema.md†L80-L95】【F:docs/step4_handoff.md†L3-L7】
-- [ ] バックアップと復旧手順のスクリプト化を行い、バックアップ運用負荷リスクを軽減する。【F:docs/database_schema.md†L93-L96】【F:docs/step4_handoff.md†L11-L13】
+- [ ] (作業メモ) 既存の `internal/persistence` レイヤー構成と `database_schema.md` を精査し、リポジトリごとの永続化責務と期待されるクエリ境界を整理する。
+- [ ] (作業メモ) SQLite の接続方法（`modernc.org/sqlite` ドライバ設定、PRAGMA）とトランザクションユーティリティ、`cmd/scheduler` 起動時のマイグレーション適用シーケンスを設計する。
+- [ ] (作業メモ) バックアップ・復旧スクリプトの配置場所と CLI 仕様、運用ドキュメント更新内容をまとめる。
+- [ ] `internal/persistence/sqlite` に接続プールと共通トランザクションヘルパーを実装し、`database/sql` エラーマッピングとログ出力方針を決める。【F:docs/database_schema.md†L3-L32】【F:docs/architecture_overview.md†L31-L52】
+- [ ] ユーザー / 会議室リポジトリを SQLite 実装で提供し、ユニーク制約・外部キーを SQL レベルで検証する。【F:docs/database_schema.md†L33-L52】【F:docs/architecture_overview.md†L31-L52】
+- [ ] スケジュール・参加者・会議室割当を管理するリポジトリを実装し、結合クエリと `ScheduleFilter` の範囲指定をカバーする。【F:docs/database_schema.md†L53-L78】【F:docs/scheduling_workflows.md†L3-L32】
+- [ ] 繰り返しルールとセッションリポジトリを実装し、TTL クリーンアップや作成・失効 API を支える SQL を整備する。【F:docs/database_schema.md†L33-L78】【F:docs/authentication_authorization.md†L14-L36】
+- [ ] 初期スキーマを up/down マイグレーションスクリプトへ分解し、外部キー検証と索引付けを追加する。【F:docs/database_schema.md†L80-L95】
+- [ ] マイグレーション runner を `cmd/scheduler` 起動シーケンスへ組み込み、起動ログとリトライポリシーを決める。【F:docs/database_schema.md†L80-L95】【F:docs/step4_handoff.md†L3-L7】
+- [ ] リポジトリとマイグレーションの結合テストを追加し、主要 CRUD / 参照整合性ケースをカバーする。【F:docs/test_strategy.md†L32-L54】
+- [ ] バックアップと復旧手順をスクリプト化し、運用ドキュメントへ反映する。【F:docs/database_schema.md†L93-L96】【F:docs/step4_handoff.md†L11-L13】
 
 ## グループC: スケジュール・会議室ドメイン
 - [ ] スケジュール CRUD、会議室管理、参加者選択、繰り返し生成、競合警告をアプリケーションサービスと HTTP ハンドラーに実装する。【F:docs/enterprise_scheduler_spec.md†L50-L113】【F:docs/scheduling_workflows.md†L3-L54】
