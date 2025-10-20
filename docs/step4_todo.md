@@ -27,12 +27,13 @@
 - [ ] バックアップと復旧手順をスクリプト化し、運用ドキュメントへ反映する。【F:docs/database_schema.md†L93-L96】【F:docs/step4_handoff.md†L11-L13】
 
 ## グループC: スケジュール・会議室ドメイン
+- [v] (作業メモ) 繰り返しエンジンの性能検証手順と警告キャッシュの設計方針をまとめ、必要なコード／ドキュメントの変更点を洗い出す。
 - [v] `internal/http/responder.go` にて日本語エラーレスポンスのマッピングを実装する。
 - [v] `internal/application/schedule_service.go` の権限チェックを強化し、作成者・管理者以外の更新・削除を禁止する。
 - [v] `internal/http/schedule_handler.go` で、作成者変更時に `403 Forbidden` を返すエラーハンドリングを追加する。
 - [v] `internal/http/room_handler.go` および `internal/application/room_service.go` に管理者専用の会議室 CRUD API を実装する。
 - [v] 繰り返し生成と競合検出ロジックに対するテストケースを追加し、仕様カバレッジを向上させる。
-- [ ] 繰り返しエンジンの性能検証と警告キャッシュ戦略を設計し、負荷時の応答遅延リスクを解消する。【F:docs/scheduling_workflows.md†L45-L54】【F:docs/step4_handoff.md†L11-L13】
+- [v] 繰り返しエンジンの性能検証と警告キャッシュ戦略を設計し、負荷時の応答遅延リスクを解消する。【F:docs/scheduling_workflows.md†L45-L54】【F:docs/step4_handoff.md†L11-L13】
 
 ## グループD: UI・ユーザードキュメント
 - [v] (作業メモ) 週次プランナー UI モックの記述とスクリーンショット追記方法を整理する。
