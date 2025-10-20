@@ -3,9 +3,11 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	_ "embed"
+	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -17,8 +19,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-//go:embed schema.sql
-var schemaSQL string
+//go:embed migrations/*.sql
+var embeddedMigrations embed.FS
 
 // Storage implements persistence repositories using an in-process data store
 // that simulates SQLite behaviour without relying on CGO.
@@ -82,6 +84,20 @@ func (s *Storage) Close() error {
 // Migrate applies the embedded schema using the stub database/sql driver so
 // that migration plumbing can be exercised without CGO.
 func (s *Storage) Migrate(ctx context.Context) error {
+	migrations, err := loadEmbeddedMigrations(embeddedMigrations)
+	if err != nil {
+		return fmt.Errorf("sqlite: load migrations: %w", err)
+	}
+	if len(migrations) == 0 {
+		return nil
+	}
+
+	statePath := s.migrationStatePath()
+	applied, err := loadMigrationState(statePath)
+	if err != nil {
+		return fmt.Errorf("sqlite: load migration state: %w", err)
+	}
+
 	db, err := sql.Open("sqlite", fmt.Sprintf("file:%s", s.path))
 	if err != nil {
 		return fmt.Errorf("sqlite: open migration connection: %w", err)
@@ -90,8 +106,93 @@ func (s *Storage) Migrate(ctx context.Context) error {
 		_ = db.Close()
 	}()
 
-	if err := runStatements(ctx, db, schemaSQL); err != nil {
-		return err
+	for _, migration := range migrations {
+		if _, already := applied[migration.Version]; already {
+			continue
+		}
+		if err := runStatements(ctx, db, migration.Up); err != nil {
+			return fmt.Errorf("sqlite: apply migration %s: %w", migration.Version, err)
+		}
+		applied[migration.Version] = time.Now().UTC().Format(time.RFC3339Nano)
+		if err := saveMigrationState(statePath, applied); err != nil {
+			return fmt.Errorf("sqlite: persist migration state: %w", err)
+		}
+	}
+	return nil
+}
+
+type migrationFile struct {
+	Version string
+	Name    string
+	Up      string
+	Down    string
+}
+
+func loadEmbeddedMigrations(fsys embed.FS) ([]migrationFile, error) {
+	paths, err := fs.Glob(fsys, "migrations/*.up.sql")
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(paths)
+	migrations := make([]migrationFile, 0, len(paths))
+	for _, upPath := range paths {
+		contents, err := fs.ReadFile(fsys, upPath)
+		if err != nil {
+			return nil, fmt.Errorf("sqlite: read migration %s: %w", upPath, err)
+		}
+		base := filepath.Base(upPath)
+		version := strings.SplitN(base, "_", 2)[0]
+		downPath := strings.Replace(upPath, ".up.", ".down.", 1)
+		var down string
+		if data, err := fs.ReadFile(fsys, downPath); err == nil {
+			down = string(data)
+		}
+		migrations = append(migrations, migrationFile{
+			Version: version,
+			Name:    base,
+			Up:      string(contents),
+			Down:    down,
+		})
+	}
+	return migrations, nil
+}
+
+func (s *Storage) migrationStatePath() string {
+	return s.path + ".migrations.json"
+}
+
+func loadMigrationState(path string) (map[string]string, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return make(map[string]string), nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: read migration state: %w", err)
+	}
+	if len(data) == 0 {
+		return make(map[string]string), nil
+	}
+	var state map[string]string
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, fmt.Errorf("sqlite: decode migration state: %w", err)
+	}
+	if state == nil {
+		state = make(map[string]string)
+	}
+	return state, nil
+}
+
+func saveMigrationState(path string, state map[string]string) error {
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return fmt.Errorf("sqlite: encode migration state: %w", err)
+	}
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
+		return fmt.Errorf("sqlite: write migration state: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("sqlite: replace migration state: %w", err)
 	}
 	return nil
 }

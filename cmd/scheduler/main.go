@@ -44,7 +44,7 @@ func main() {
 		}
 	}()
 
-	if err := storage.Migrate(context.Background()); err != nil {
+	if err := applyMigrationsWithRetry(ctx, storage, logger); err != nil {
 		logger.Error("failed to apply migrations", "error", err)
 		os.Exit(1)
 	}
@@ -122,6 +122,33 @@ func randomHex(bytes int) string {
 		return fmt.Sprintf("fallback-%d", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(buf)
+}
+
+func applyMigrationsWithRetry(ctx context.Context, storage *sqlite.Storage, logger *slog.Logger) error {
+	const attempts = 3
+	backoff := time.Second
+
+	for i := 1; i <= attempts; i++ {
+		logger.Info("sqlite migrate start", "attempt", i)
+		if err := storage.Migrate(ctx); err != nil {
+			logger.Error("sqlite migrate failed", "attempt", i, "error", err)
+			if i == attempts {
+				return err
+			}
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			if backoff < 8*time.Second {
+				backoff *= 2
+			}
+			continue
+		}
+		logger.Info("sqlite migrate done", "attempt", i)
+		return nil
+	}
+	return nil
 }
 
 type userRepositoryAdapter struct {
