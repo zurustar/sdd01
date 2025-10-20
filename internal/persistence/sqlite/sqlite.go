@@ -86,7 +86,9 @@ func (s *Storage) Migrate(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("sqlite: open migration connection: %w", err)
 	}
-	defer db.Close()
+	defer func() {
+		_ = db.Close()
+	}()
 
 	if err := runStatements(ctx, db, schemaSQL); err != nil {
 		return err

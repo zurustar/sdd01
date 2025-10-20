@@ -184,6 +184,31 @@ func TestRoomRepository(t *testing.T) {
 	}
 }
 
+func TestWeekdayEncoding(t *testing.T) {
+	t.Parallel()
+
+	days := []time.Weekday{time.Monday, time.Wednesday, time.Friday}
+	encoded := encodeWeekdays(days)
+	decoded := decodeWeekdays(encoded)
+
+	if len(decoded) != len(days) {
+		t.Fatalf("expected %d decoded days, got %d", len(days), len(decoded))
+	}
+
+	for i, day := range days {
+		if decoded[i] != day {
+			t.Fatalf("expected day %v at index %d, got %v", day, i, decoded[i])
+		}
+	}
+
+	if encodeWeekdays(nil) != 0 {
+		t.Fatalf("expected zero encoding for nil slice")
+	}
+	if decoded := decodeWeekdays(0); len(decoded) != 0 {
+		t.Fatalf("expected empty slice for zero encoding, got %v", decoded)
+	}
+}
+
 func TestScheduleRepository(t *testing.T) {
 	ctx := context.Background()
 	storage := newTestStorage(t)

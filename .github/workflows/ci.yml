@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  lint-and-test:
+    name: Lint and Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Run unit tests
+        run: go test ./...
+
+      - name: Run unit tests with race detector
+        run: go test -race ./...
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v4
+        with:
+          version: v2.1.6
+          args: --timeout=5m
+
+  coverage:
+    name: Enforce Coverage Threshold
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Run coverage tests
+        run: go test -covermode=atomic -coverprofile=coverage.out ./internal/application ./internal/persistence
+
+      - name: Verify coverage meets threshold
+        shell: bash
+        run: |
+          set -euo pipefail
+          total=$(go tool cover -func=coverage.out | awk 'END{print $3}')
+          python - <<'PY' "$total"
+import sys
+coverage = float(sys.argv[1].rstrip('%'))
+threshold = 80.0
+if coverage < threshold:
+    print(f"coverage {coverage:.2f}% is below required {threshold:.2f}%")
+    sys.exit(1)
+print(f"coverage {coverage:.2f}% meets required {threshold:.2f}%")
+PY
+
+  go-test-cgo-disabled:
+    name: Tests with CGO disabled
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Run tests without CGO
+        env:
+          CGO_ENABLED: "0"
+        run: go test ./...
