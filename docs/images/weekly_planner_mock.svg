@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720">
+  <style>
+    .label { font-family: 'Noto Sans JP', 'Hiragino Sans', 'Arial', sans-serif; font-size: 20px; fill: #1f2933; }
+    .small { font-size: 16px; fill: #334155; }
+    .header { fill: #0f766e; }
+    .sidebar { fill: #e2e8f0; }
+    .daycol { fill: #f8fafc; stroke: #cbd5f5; stroke-width: 1; }
+    .slot { fill-opacity: 0.85; stroke: none; }
+    .legend { fill: #f1f5f9; stroke: #cbd5f5; stroke-width: 1; }
+  </style>
+  <rect width="1200" height="720" fill="#ffffff" rx="24" />
+  <rect x="40" y="40" width="1120" height="80" class="header" rx="16" />
+  <text x="60" y="95" class="label" fill="#f8fafc">Enterprise Scheduler - 週次プランナー</text>
+  <rect x="40" y="140" width="140" height="520" class="sidebar" rx="16" />
+  <text x="60" y="170" class="small">チームビュー</text>
+  <text x="60" y="205" class="small">・自分</text>
+  <text x="60" y="235" class="small">・Bob</text>
+  <text x="60" y="265" class="small">・Carol</text>
+  <text x="60" y="325" class="small">会議室</text>
+  <text x="60" y="355" class="small">・会議室A</text>
+  <text x="60" y="385" class="small">・会議室B</text>
+  <rect x="200" y="140" width="960" height="520" fill="#e2e8f0" rx="20" />
+  <g transform="translate(220,160)">
+    <text x="0" y="0" class="small">週表示 2024/05/13 - 2024/05/19</text>
+    <g transform="translate(0,24)">
+      <rect width="920" height="56" fill="#0ea5e9" opacity="0.12" rx="12" />
+      <text x="20" y="36" class="small">月</text>
+      <text x="150" y="36" class="small">火</text>
+      <text x="280" y="36" class="small">水</text>
+      <text x="410" y="36" class="small">木</text>
+      <text x="540" y="36" class="small">金</text>
+      <text x="670" y="36" class="small">土</text>
+      <text x="800" y="36" class="small">日</text>
+    </g>
+    <g transform="translate(0,96)">
+      <rect width="920" height="380" fill="#ffffff" stroke="#cbd5f5" stroke-width="1" rx="18" />
+      <g>
+        <text x="-60" y="40" class="small">09:00</text>
+        <text x="-60" y="120" class="small">11:00</text>
+        <text x="-60" y="200" class="small">13:00</text>
+        <text x="-60" y="280" class="small">15:00</text>
+      </g>
+      <rect x="40" y="40" width="120" height="80" fill="#38bdf8" class="slot" rx="12" />
+      <text x="50" y="80" class="small" fill="#0f172a">プロジェクト定例</text>
+      <text x="50" y="105" class="small" fill="#0f172a">(会議室A)</text>
+      <rect x="300" y="140" width="140" height="90" fill="#f97316" class="slot" rx="12" />
+      <text x="310" y="180" class="small" fill="#0f172a">1on1 - Bob</text>
+      <rect x="580" y="60" width="140" height="100" fill="#22d3ee" class="slot" rx="12" />
+      <text x="590" y="105" class="small" fill="#0f172a">営業レビュー</text>
+      <rect x="720" y="200" width="140" height="100" fill="#f472b6" class="slot" rx="12" />
+      <text x="730" y="245" class="small" fill="#0f172a">デザインMTG</text>
+      <rect x="520" y="260" width="160" height="90" fill="#facc15" class="slot" rx="12" />
+      <text x="530" y="300" class="small" fill="#0f172a">リリース準備</text>
+    </g>
+    <g transform="translate(0,500)">
+      <rect width="920" height="60" class="legend" rx="12" />
+      <text x="20" y="38" class="small">ビュートグル: 週 / 日 / 月｜参加者切替｜タイムラインスクロール｜競合警告バナー</text>
+    </g>
+  </g>
+</svg>
