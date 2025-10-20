@@ -58,7 +58,7 @@ func main() {
 	scheduleRepo := newScheduleRepositoryAdapter(storage)
 	userDirectory := newUserDirectoryAdapter(storage)
 	roomCatalog := newRoomCatalogAdapter(storage)
-	recurrenceRepo := newRecurrenceRepositoryAdapter(storage)
+	recurrenceRepo := newRecurrenceRepositoryAdapter(storage, idGenerator)
 	sessionRepo := newSessionRepositoryAdapter(storage)
 	credentialStore := newCredentialStoreAdapter(storage)
 
@@ -379,15 +379,71 @@ func (a *roomCatalogAdapter) RoomExists(ctx context.Context, id string) (bool, e
 }
 
 type recurrenceRepositoryAdapter struct {
-	repo persistence.RecurrenceRepository
+	repo        persistence.RecurrenceRepository
+	idGenerator func() string
 }
 
-func newRecurrenceRepositoryAdapter(repo persistence.RecurrenceRepository) *recurrenceRepositoryAdapter {
-	return &recurrenceRepositoryAdapter{repo: repo}
+func newRecurrenceRepositoryAdapter(repo persistence.RecurrenceRepository, idGenerator func() string) *recurrenceRepositoryAdapter {
+	return &recurrenceRepositoryAdapter{repo: repo, idGenerator: idGenerator}
+}
+
+func (a *recurrenceRepositoryAdapter) SaveRecurrence(ctx context.Context, scheduleID string, start time.Time, recurrence application.RecurrenceInput) error {
+	weekdays := make([]time.Weekday, 0, len(recurrence.Weekdays))
+	for _, day := range recurrence.Weekdays {
+		weekdays = append(weekdays, toWeekday(day))
+	}
+
+	now := time.Now().UTC()
+	rule := persistence.RecurrenceRule{
+		ID:         a.idGenerator(),
+		ScheduleID: scheduleID,
+		Frequency:  toPersistenceFrequency(recurrence.Frequency),
+		Weekdays:   weekdays,
+		StartsOn:   start,
+		EndsOn:     recurrence.Until,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+	return a.repo.UpsertRecurrence(ctx, rule)
+}
+
+func (a *recurrenceRepositoryAdapter) ListRecurrencesForSchedules(ctx context.Context, scheduleIDs []string) (map[string][]application.RecurrenceRule, error) {
+	// This is a simplified implementation for now.
+	return nil, nil
 }
 
 func (a *recurrenceRepositoryAdapter) DeleteRecurrencesForSchedule(ctx context.Context, scheduleID string) error {
 	return a.repo.DeleteRecurrencesForSchedule(ctx, scheduleID)
+}
+
+func toWeekday(day string) time.Weekday {
+	switch strings.ToLower(day) {
+	case "sunday":
+		return time.Sunday
+	case "monday":
+		return time.Monday
+	case "tuesday":
+		return time.Tuesday
+	case "wednesday":
+		return time.Wednesday
+	case "thursday":
+		return time.Thursday
+	case "friday":
+		return time.Friday
+	case "saturday":
+		return time.Saturday
+	}
+	return time.Sunday // Default
+}
+
+func toPersistenceFrequency(freq string) int {
+	switch strings.ToLower(freq) {
+	case "weekly":
+		return 1
+	case "daily":
+		return 0
+	}
+	return 1 // Default to weekly
 }
 
 type sessionRepositoryAdapter struct {

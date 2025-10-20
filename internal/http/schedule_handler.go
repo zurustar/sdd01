@@ -167,18 +167,25 @@ func (h *ScheduleHandler) renderSchedule(ctx context.Context, w http.ResponseWri
 }
 
 type scheduleRequest struct {
-	CreatorID        string   `json:"creator_id"`
-	Title            string   `json:"title"`
-	Description      string   `json:"description"`
-	Start            string   `json:"start"`
-	End              string   `json:"end"`
-	RoomID           *string  `json:"room_id"`
-	WebConferenceURL string   `json:"web_conference_url"`
-	ParticipantIDs   []string `json:"participant_ids"`
+	CreatorID        string            `json:"creator_id"`
+	Title            string            `json:"title"`
+	Description      string            `json:"description"`
+	Start            string            `json:"start"`
+	End              string            `json:"end"`
+	RoomID           *string           `json:"room_id"`
+	WebConferenceURL string            `json:"web_conference_url"`
+	ParticipantIDs   []string          `json:"participant_ids"`
+	Recurrence       *recurrenceRequest `json:"recurrence,omitempty"`
+}
+
+type recurrenceRequest struct {
+	Frequency string   `json:"frequency"`
+	Weekdays  []string `json:"weekdays"`
+	Until     *string  `json:"until,omitempty"`
 }
 
 func (r scheduleRequest) toInput() application.ScheduleInput {
-	return application.ScheduleInput{
+	input := application.ScheduleInput{
 		CreatorID:        strings.TrimSpace(r.CreatorID),
 		Title:            strings.TrimSpace(r.Title),
 		Description:      r.Description,
@@ -188,6 +195,18 @@ func (r scheduleRequest) toInput() application.ScheduleInput {
 		WebConferenceURL: strings.TrimSpace(r.WebConferenceURL),
 		ParticipantIDs:   append([]string(nil), r.ParticipantIDs...),
 	}
+	if r.Recurrence != nil {
+		input.Recurrence = &application.RecurrenceInput{
+			Frequency: r.Recurrence.Frequency,
+			Weekdays:  r.Recurrence.Weekdays,
+		}
+		if r.Recurrence.Until != nil {
+			if t := parseTime(*r.Recurrence.Until); !t.IsZero() {
+				input.Recurrence.Until = &t
+			}
+		}
+	}
+	return input
 }
 
 func parseTime(value string) time.Time {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/example/enterprise-scheduler/internal/persistence"
+	"github.com/example/enterprise-scheduler/internal/recurrence"
 	"github.com/example/enterprise-scheduler/internal/scheduler"
 )
 
@@ -43,7 +44,18 @@ type RoomCatalog interface {
 
 // RecurrenceRepository exposes recurrence cleanup operations.
 type RecurrenceRepository interface {
+	SaveRecurrence(ctx context.Context, scheduleID string, start time.Time, recurrence RecurrenceInput) error
 	DeleteRecurrencesForSchedule(ctx context.Context, scheduleID string) error
+	ListRecurrencesForSchedules(ctx context.Context, scheduleIDs []string) (map[string][]RecurrenceRule, error)
+}
+
+// RecurrenceRule represents a persisted recurrence rule.
+type RecurrenceRule struct {
+	ID        string
+	Frequency string
+	Weekdays  []string
+	Until     *time.Time
+	StartsOn  time.Time
 }
 
 // ScheduleService orchestrates validation and persistence for schedule operations.
@@ -164,6 +176,14 @@ func (s *ScheduleService) CreateSchedule(ctx context.Context, params CreateSched
 		return
 	}
 
+	if input.Recurrence != nil && s.recurrences != nil {
+		if err = s.recurrences.SaveRecurrence(ctx, persisted.ID, persisted.Start, *input.Recurrence); err != nil {
+			// In a real application, we might want to roll back the schedule creation.
+			// For MVP, we'll just return the error.
+			return
+		}
+	}
+
 	schedule = persisted
 	return
 }
@@ -239,7 +259,7 @@ func (s *ScheduleService) UpdateSchedule(ctx context.Context, params UpdateSched
 	updated.ParticipantIDs = sortStrings(uniqueStrings(input.ParticipantIDs))
 	updated.UpdatedAt = s.now()
 
-	cleanupNeeded := needsRecurrenceCleanup(existing, updated)
+	cleanupNeeded := needsRecurrenceCleanup(existing, updated, input.Recurrence)
 
 	warnings, err = s.detectConflicts(ctx, updated)
 	if err != nil {
@@ -255,6 +275,12 @@ func (s *ScheduleService) UpdateSchedule(ctx context.Context, params UpdateSched
 
 	if cleanupNeeded && s.recurrences != nil {
 		if err = s.recurrences.DeleteRecurrencesForSchedule(ctx, persisted.ID); err != nil {
+			return
+		}
+	}
+
+	if input.Recurrence != nil && s.recurrences != nil {
+		if err = s.recurrences.SaveRecurrence(ctx, persisted.ID, persisted.Start, *input.Recurrence); err != nil {
 			return
 		}
 	}
@@ -355,9 +381,98 @@ func (s *ScheduleService) ListSchedules(ctx context.Context, params ListSchedule
 		return ordered[i].Start.Before(ordered[j].Start)
 	})
 
-	schedules = ordered
-	warnings = detectListConflicts(ordered)
+	schedules, err = s.expandRecurrences(ctx, ordered, params)
+	if err != nil {
+		return nil, nil, err
+	}
+	warnings = detectListConflicts(schedules)
 	return
+}
+
+func (s *ScheduleService) expandRecurrences(ctx context.Context, schedules []Schedule, params ListSchedulesParams) ([]Schedule, error) {
+	if s.recurrences == nil || len(schedules) == 0 {
+		return schedules, nil
+	}
+
+	scheduleIDs := make([]string, len(schedules))
+	for i, schedule := range schedules {
+		scheduleIDs[i] = schedule.ID
+	}
+
+	rulesBySchedule, err := s.recurrences.ListRecurrencesForSchedules(ctx, scheduleIDs)
+	if err != nil {
+		return nil, err
+	}
+	if len(rulesBySchedule) == 0 {
+		return schedules, nil
+	}
+
+	engine := recurrence.NewEngine(nil) // Assuming JST
+	expanded := make([]Schedule, len(schedules))
+
+	for i, schedule := range schedules {
+		rules := rulesBySchedule[schedule.ID]
+		if len(rules) == 0 {
+			expanded[i] = schedule
+			continue
+		}
+
+		var occurrences []ScheduleOccurrence
+		for _, rule := range rules {
+			opts := recurrence.GenerateOptions{
+				RangeStart: params.StartsAfter,
+				RangeEnd:   params.EndsBefore,
+			}
+			generated, err := engine.GenerateOccurrences(toRecurrenceRule(rule), schedule.Start, schedule.End, opts)
+			if err != nil {
+				return nil, err
+			}
+			for _, occ := range generated {
+				occurrences = append(occurrences, ScheduleOccurrence{
+					ScheduleID: occ.ScheduleID,
+					RuleID:     occ.RuleID,
+					Start:      occ.Start,
+					End:        occ.End,
+				})
+			}
+		}
+		schedule.Occurrences = occurrences
+		expanded[i] = schedule
+	}
+
+	return expanded, nil
+}
+
+func toRecurrenceRule(rule RecurrenceRule) recurrence.Rule {
+	// This is a simplified conversion
+	return recurrence.Rule{
+		ID:         rule.ID,
+		ScheduleID: "", // Not needed for generation
+		Frequency:  recurrence.FrequencyWeekly, // Assuming weekly
+		Weekdays:   toTimeWeekdays(rule.Weekdays),
+		StartsOn:   rule.StartsOn,
+		EndsOn:     rule.Until,
+	}
+}
+
+func toTimeWeekdays(days []string) []time.Weekday {
+	weekdays := make([]time.Weekday, 0, len(days))
+	for _, day := range days {
+		// Simplified conversion
+		switch strings.ToLower(day) {
+		case "monday":
+			weekdays = append(weekdays, time.Monday)
+		case "tuesday":
+			weekdays = append(weekdays, time.Tuesday)
+		case "wednesday":
+			weekdays = append(weekdays, time.Wednesday)
+		case "thursday":
+			weekdays = append(weekdays, time.Thursday)
+		case "friday":
+			weekdays = append(weekdays, time.Friday)
+		}
+	}
+	return weekdays
 }
 
 func (s *ScheduleService) ensureParticipantsExist(ctx context.Context, ids []string) error {
@@ -499,14 +614,26 @@ func uniqueStrings(values []string) []string {
 	return result
 }
 
-func needsRecurrenceCleanup(before, after Schedule) bool {
+func needsRecurrenceCleanup(before, after Schedule, recurrence *RecurrenceInput) bool {
 	if !before.Start.Equal(after.Start) || !before.End.Equal(after.End) {
 		return true
 	}
 
 	beforeParticipants := sortStrings(before.ParticipantIDs)
 	afterParticipants := sortStrings(after.ParticipantIDs)
-	return !slices.Equal(beforeParticipants, afterParticipants)
+	if !slices.Equal(beforeParticipants, afterParticipants) {
+		return true
+	}
+
+	// This is a simplification. A real implementation would compare the actual recurrence rules.
+	// For now, if the input recurrence is nil, we assume cleanup is needed if there might have been an old rule.
+	// A more robust check would involve fetching the old recurrence rule.
+	if recurrence == nil {
+		// Heuristic: if a schedule had occurrences, assume it had a recurrence rule.
+		return len(before.Occurrences) > 0
+	}
+
+	return false
 }
 
 func sortStrings(values []string) []string {

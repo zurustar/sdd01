@@ -165,8 +165,25 @@ func (r *roomCatalogStub) RoomExists(ctx context.Context, id string) (bool, erro
 }
 
 type recurrenceRepoStub struct {
-	deletedIDs []string
-	err        error
+	savedRecurrence *RecurrenceInput
+	savedScheduleID string
+	savedStart      time.Time
+	deletedIDs      []string
+	err             error
+}
+
+func (r *recurrenceRepoStub) SaveRecurrence(ctx context.Context, scheduleID string, start time.Time, recurrence RecurrenceInput) error {
+	if r.err != nil {
+		return r.err
+	}
+	r.savedScheduleID = scheduleID
+	r.savedStart = start
+	r.savedRecurrence = &recurrence
+	return nil
+}
+
+func (r *recurrenceRepoStub) ListRecurrencesForSchedules(ctx context.Context, scheduleIDs []string) (map[string][]RecurrenceRule, error) {
+	return nil, nil
 }
 
 func (r *recurrenceRepoStub) DeleteRecurrencesForSchedule(ctx context.Context, scheduleID string) error {
@@ -1143,6 +1160,95 @@ func TestScheduleService_ListSchedules_FilteringAndOrdering(t *testing.T) {
 			t.Fatalf("expected room warning referencing schedule-2, got %v", warnings)
 		}
 	})
+}
+
+func TestScheduleService_CreateSchedule_SavesRecurrence(t *testing.T) {
+	t.Parallel()
+	repo := &scheduleRepoStub{}
+	recurrences := &recurrenceRepoStub{}
+	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, recurrences, func() string { return "schedule-1" }, func() time.Time { return mustJST(t, 9) })
+
+	recurrenceInput := &RecurrenceInput{
+		Frequency: "weekly",
+		Weekdays:  []string{"Monday", "Wednesday"},
+	}
+
+	_, _, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
+		Principal: Principal{UserID: "user-1"},
+		Input: ScheduleInput{
+			CreatorID:      "user-1",
+			Title:          "Weekly Sync",
+			Start:          mustJST(t, 10),
+			End:            mustJST(t, 11),
+			ParticipantIDs: []string{"user-1"},
+			Recurrence:     recurrenceInput,
+		},
+	})
+
+	if err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+
+	if recurrences.savedScheduleID != "schedule-1" {
+		t.Errorf("expected SaveRecurrence to be called with schedule ID 'schedule-1', got '%s'", recurrences.savedScheduleID)
+	}
+	if recurrences.savedRecurrence == nil {
+		t.Fatal("expected SaveRecurrence to be called, but it was not")
+	}
+	if recurrences.savedRecurrence.Frequency != "weekly" {
+		t.Errorf("expected saved recurrence frequency to be 'weekly', got '%s'", recurrences.savedRecurrence.Frequency)
+	}
+	if !recurrences.savedStart.Equal(mustJST(t, 10)) {
+		t.Errorf("expected start time to be saved with recurrence")
+	}
+}
+
+func TestScheduleService_UpdateSchedule_SavesRecurrence(t *testing.T) {
+	t.Parallel()
+	repo := &scheduleRepoStub{
+		schedule: Schedule{
+			ID:             "schedule-1",
+			CreatorID:      "user-1",
+			Start:          mustJST(t, 10),
+			ParticipantIDs: []string{"user-1"},
+		},
+	}
+	recurrences := &recurrenceRepoStub{}
+	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, recurrences, nil, func() time.Time { return mustJST(t, 9) })
+
+	recurrenceInput := &RecurrenceInput{
+		Frequency: "weekly",
+		Weekdays:  []string{"Friday"},
+	}
+
+	_, _, err := svc.UpdateSchedule(context.Background(), UpdateScheduleParams{
+		Principal:  Principal{UserID: "user-1"},
+		ScheduleID: "schedule-1",
+		Input: ScheduleInput{
+			Title:          "Updated Weekly Sync",
+			Start:          mustJST(t, 10),
+			End:            mustJST(t, 11),
+			ParticipantIDs: []string{"user-1"},
+			Recurrence:     recurrenceInput,
+		},
+	})
+
+	if err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+
+	if recurrences.savedScheduleID != "schedule-1" {
+		t.Errorf("expected SaveRecurrence to be called with schedule ID 'schedule-1', got '%s'", recurrences.savedScheduleID)
+	}
+	if recurrences.savedRecurrence == nil {
+		t.Fatal("expected SaveRecurrence to be called, but it was not")
+	}
+	if recurrences.savedRecurrence.Frequency != "weekly" {
+		t.Errorf("expected saved recurrence frequency to be 'weekly', got '%s'", recurrences.savedRecurrence.Frequency)
+	}
+	if !recurrences.savedStart.Equal(mustJST(t, 10)) {
+		t.Errorf("expected start time to be saved with recurrence")
+	}
 }
 
 func TestScheduleService_ListSchedules_PeriodFilters(t *testing.T) {

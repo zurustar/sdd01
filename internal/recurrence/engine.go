@@ -2,6 +2,7 @@ package recurrence
 
 import (
 	"errors"
+	"sort"
 	"time"
 )
 
@@ -150,7 +151,7 @@ func (e *Engine) GenerateOccurrences(rule Rule, baseStart, baseEnd time.Time, op
 			})
 		}
 
-		current = current.Add(24 * time.Hour)
+		current = nextWeeklyCandidate(current, weekdaySet)
 	}
 
 	return occurrences, nil
@@ -194,4 +195,35 @@ func shouldInclude(freq Frequency, weekdaySet map[time.Weekday]struct{}, day tim
 	default:
 		return false, ErrInvalidFrequency
 	}
+}
+
+func nextWeeklyCandidate(current time.Time, weekdays map[time.Weekday]struct{}) time.Time {
+	if len(weekdays) == 0 {
+		return current.Add(24 * time.Hour)
+	}
+
+	sortedWeekdays := make([]time.Weekday, 0, len(weekdays))
+	for day := range weekdays {
+		sortedWeekdays = append(sortedWeekdays, day)
+	}
+	sort.Slice(sortedWeekdays, func(i, j int) bool {
+		return sortedWeekdays[i] < sortedWeekdays[j]
+	})
+
+	currentWeekday := current.Weekday()
+	daysToAdd := 0
+
+	for _, day := range sortedWeekdays {
+		if day > currentWeekday {
+			daysToAdd = int(day - currentWeekday)
+			break
+		}
+	}
+
+	if daysToAdd == 0 {
+		firstDayOfWeek := sortedWeekdays[0]
+		daysToAdd = (7 - int(currentWeekday)) + int(firstDayOfWeek)
+	}
+
+	return current.Add(time.Duration(daysToAdd) * 24 * time.Hour)
 }

@@ -466,6 +466,56 @@ func TestScheduleHandlers(t *testing.T) {
 		}
 	})
 
+	t.Run("CreateWithRecurrence", func(t *testing.T) {
+		t.Parallel()
+
+		var capturedParams application.CreateScheduleParams
+		service := &fakeScheduleService{
+			createScheduleFunc: func(ctx context.Context, params application.CreateScheduleParams) (application.Schedule, []application.ConflictWarning, error) {
+				capturedParams = params
+				return application.Schedule{ID: "schedule-new"}, nil, nil
+			},
+		}
+
+		handler := NewScheduleHandler(service, nil)
+
+		payload := map[string]any{
+			"title":           "Recurring Meeting",
+			"start":           "2024-04-01T10:00:00Z",
+			"end":             "2024-04-01T11:00:00Z",
+			"participant_ids": []string{"user-1"},
+			"recurrence": map[string]any{
+				"frequency": "weekly",
+				"weekdays":  []string{"Monday", "Friday"},
+			},
+		}
+
+		body, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("failed to marshal payload: %v", err)
+		}
+
+		req := httptest.NewRequest(http.MethodPost, "/schedules", bytes.NewReader(body))
+		req = req.WithContext(ContextWithPrincipal(req.Context(), application.Principal{UserID: "user-1"}))
+		recorder := httptest.NewRecorder()
+
+		handler.Create(recorder, req)
+
+		res := recorder.Result()
+		t.Cleanup(func() { _ = res.Body.Close() })
+
+		if res.StatusCode != http.StatusCreated {
+			t.Fatalf("expected status 201 Created, got %d", res.StatusCode)
+		}
+
+		if capturedParams.Input.Recurrence == nil {
+			t.Fatal("expected recurrence input to be captured")
+		}
+		if capturedParams.Input.Recurrence.Frequency != "weekly" {
+			t.Errorf("expected frequency 'weekly', got '%s'", capturedParams.Input.Recurrence.Frequency)
+		}
+	})
+
 	t.Run("expand recurrences in list responses", func(t *testing.T) {
 		t.Parallel()
 		occurrenceStart := mustParse(t, "2024-05-01T09:00:00+09:00")

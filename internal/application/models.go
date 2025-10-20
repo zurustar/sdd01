@@ -8,6 +8,13 @@ type Principal struct {
 	IsAdmin bool
 }
 
+// RecurrenceInput captures caller provided recurrence rule fields.
+type RecurrenceInput struct {
+	Frequency string
+	Weekdays  []string
+	Until     *time.Time
+}
+
 // ScheduleInput captures caller provided schedule fields.
 type ScheduleInput struct {
 	CreatorID        string
@@ -18,6 +25,7 @@ type ScheduleInput struct {
 	RoomID           *string
 	WebConferenceURL string
 	ParticipantIDs   []string
+	Recurrence       *RecurrenceInput
 }
 
 // Schedule represents a persisted meeting schedule.
