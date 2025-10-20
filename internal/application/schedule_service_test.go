@@ -1286,6 +1286,9 @@ func TestScheduleService_UpdateSchedule_CleansUpRecurrences(t *testing.T) {
 				Start:          mustJST(t, 9),
 				End:            mustJST(t, 10),
 				ParticipantIDs: []string{"user-1"},
+				Occurrences: []ScheduleOccurrence{{
+					ScheduleID: "schedule-1",
+				}},
 			},
 		}
 		recurrences := &recurrenceRepoStub{}
@@ -1328,6 +1331,9 @@ func TestScheduleService_UpdateSchedule_CleansUpRecurrences(t *testing.T) {
 				Start:          mustJST(t, 9),
 				End:            mustJST(t, 10),
 				ParticipantIDs: []string{"user-1", "user-2"},
+				Occurrences: []ScheduleOccurrence{{
+					ScheduleID: "schedule-2",
+				}},
 			},
 		}
 		recurrences := &recurrenceRepoStub{}

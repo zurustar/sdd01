@@ -67,21 +67,36 @@ func (r responder) handleServiceError(ctx context.Context, w http.ResponseWriter
 
 	switch {
 	case errors.Is(err, application.ErrUnauthorized):
-		r.writeJSON(ctx, w, http.StatusForbidden, errorResponse{Message: "この操作を実行する権限がありません。"})
+		r.writeJSON(ctx, w, http.StatusForbidden, errorResponse{
+			ErrorCode: "AUTH_FORBIDDEN",
+			Message:   "この操作を実行する権限がありません。",
+		})
 	case errors.Is(err, application.ErrNotFound):
-		r.writeJSON(ctx, w, http.StatusNotFound, errorResponse{Message: "指定されたリソースが見つかりません。"})
+		r.writeJSON(ctx, w, http.StatusNotFound, errorResponse{
+			ErrorCode: "RESOURCE_NOT_FOUND",
+			Message:   "指定されたリソースが見つかりません。",
+		})
+	case errors.Is(err, application.ErrAlreadyExists):
+		r.writeJSON(ctx, w, http.StatusConflict, errorResponse{
+			ErrorCode: "RESOURCE_CONFLICT",
+			Message:   "指定されたリソースは既に存在します。",
+		})
 	default:
 		var vErr *application.ValidationError
 		if errors.As(err, &vErr) {
 			details := localizeValidationErrors(vErr)
 			r.writeJSON(ctx, w, http.StatusUnprocessableEntity, errorResponse{
-				Message: "入力内容に誤りがあります。",
-				Errors:  details,
+				ErrorCode: "VALIDATION_FAILED",
+				Message:   "入力内容に誤りがあります。",
+				Errors:    details,
 			})
 			return
 		}
 
-		r.writeJSON(ctx, w, http.StatusInternalServerError, errorResponse{Message: "サーバー内部でエラーが発生しました。"})
+		r.writeJSON(ctx, w, http.StatusInternalServerError, errorResponse{
+			ErrorCode: "INTERNAL_SERVER_ERROR",
+			Message:   "サーバー内部でエラーが発生しました。",
+		})
 	}
 }
 

@@ -311,7 +311,6 @@ func (s *ScheduleService) DeleteSchedule(ctx context.Context, principal Principa
 	}
 
 	if existing.CreatorID != principal.UserID && !principal.IsAdmin {
-		logger.ErrorContext(ctx, "unauthorized schedule delete attempt", "error", ErrUnauthorized, "error_kind", ErrorKind(ErrUnauthorized))
 		return ErrUnauthorized
 	}
 
