@@ -37,29 +37,37 @@ func RequireSession(validator SessionValidator, logger *slog.Logger) func(http.H
 			token := strings.TrimSpace(extractTokenFromRequest(r))
 			if token == "" {
 				audit.ErrorContext(r.Context(), "session token missing", "error_kind", "unauthorized")
-				responder.writeError(r.Context(), w, http.StatusUnauthorized, errMissingSessionToken)
+				responder.writeJSON(r.Context(), w, http.StatusUnauthorized, errorResponse{
+					ErrorCode: "AUTH_SESSION_EXPIRED",
+					Message:   errMissingSessionToken.Error(),
+				})
 				return
 			}
 
 			principal, err := validator.ValidateSession(r.Context(), token)
 			if err != nil {
+				payload := errorResponse{
+					ErrorCode: "AUTH_SESSION_EXPIRED",
+					Message:   "セッションの有効期限が切れています",
+				}
 				switch {
 				case errors.Is(err, application.ErrUnauthorized):
 					audit.ErrorContext(r.Context(), "session invalid", "error", err, "error_kind", application.ErrorKind(err))
-					responder.writeJSON(r.Context(), w, http.StatusUnauthorized, errorResponse{Message: "セッションが無効です。再度ログインしてください。"})
 				case errors.Is(err, application.ErrNotFound):
 					audit.ErrorContext(r.Context(), "session not found", "error", err, "error_kind", application.ErrorKind(err))
-					responder.writeJSON(r.Context(), w, http.StatusUnauthorized, errorResponse{Message: "セッションが見つかりません。再度ログインしてください。"})
 				case errors.Is(err, application.ErrSessionExpired):
 					audit.ErrorContext(r.Context(), "session expired", "error", err, "error_kind", application.ErrorKind(err))
-					responder.writeJSON(r.Context(), w, http.StatusUnauthorized, errorResponse{Message: "セッションの有効期限が切れています。再度ログインしてください。"})
 				case errors.Is(err, application.ErrSessionRevoked):
 					audit.ErrorContext(r.Context(), "session revoked", "error", err, "error_kind", application.ErrorKind(err))
-					responder.writeJSON(r.Context(), w, http.StatusUnauthorized, errorResponse{Message: "セッションが取り消されました。再度ログインしてください。"})
 				default:
 					audit.ErrorContext(r.Context(), "session validation failed", "error", err, "error_kind", application.ErrorKind(err))
-					responder.writeJSON(r.Context(), w, http.StatusInternalServerError, errorResponse{Message: "セッション検証中にエラーが発生しました。"})
+					responder.writeJSON(r.Context(), w, http.StatusInternalServerError, errorResponse{
+						ErrorCode: "INTERNAL_ERROR",
+						Message:   "セッション検証中にエラーが発生しました",
+					})
+					return
 				}
+				responder.writeJSON(r.Context(), w, http.StatusUnauthorized, payload)
 				return
 			}
 

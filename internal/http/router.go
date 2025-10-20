@@ -17,19 +17,31 @@ func NewRouter(cfg RouterConfig) http.Handler {
 	mux := http.NewServeMux()
 
 	if cfg.Auth != nil {
-		mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("/sessions", func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodPost {
 				methodNotAllowed(w, http.MethodPost)
 				return
 			}
-			cfg.Auth.Login(w, r)
+			cfg.Auth.CreateSession(w, r)
 		})
-		mux.HandleFunc("/logout", func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodPost {
-				methodNotAllowed(w, http.MethodPost)
+		mux.HandleFunc("/sessions/current", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodDelete {
+				methodNotAllowed(w, http.MethodDelete)
 				return
 			}
-			cfg.Auth.Logout(w, r)
+			cfg.Auth.DeleteCurrentSession(w, r)
+		})
+		mux.HandleFunc("/sessions/", func(w http.ResponseWriter, r *http.Request) {
+			token := strings.TrimPrefix(r.URL.Path, "/sessions/")
+			if token == "" {
+				http.NotFound(w, r)
+				return
+			}
+			if r.Method != http.MethodDelete {
+				methodNotAllowed(w, http.MethodDelete)
+				return
+			}
+			cfg.Auth.DeleteSession(w, r, token)
 		})
 	}
 

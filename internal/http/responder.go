@@ -16,7 +16,7 @@ var (
 	errInvalidScheduleID   = errors.New("無効なスケジュール ID です。")
 	errInvalidUserID       = errors.New("無効なユーザー ID です。")
 	errInvalidRoomID       = errors.New("無効な会議室 ID です。")
-	errMissingSessionToken = errors.New("セッショントークンが指定されていません。")
+	errMissingSessionToken = errors.New("認証トークンを指定してください")
 )
 
 type responder struct {
@@ -67,7 +67,10 @@ func (r responder) handleServiceError(ctx context.Context, w http.ResponseWriter
 
 	switch {
 	case errors.Is(err, application.ErrUnauthorized):
-		r.writeJSON(ctx, w, http.StatusForbidden, errorResponse{Message: "この操作を実行する権限がありません。"})
+		r.writeJSON(ctx, w, http.StatusForbidden, errorResponse{
+			ErrorCode: "AUTH_FORBIDDEN",
+			Message:   "この操作を実行する権限がありません。",
+		})
 	case errors.Is(err, application.ErrNotFound):
 		r.writeJSON(ctx, w, http.StatusNotFound, errorResponse{Message: "指定されたリソースが見つかりません。"})
 	default:
