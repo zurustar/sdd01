@@ -60,13 +60,14 @@ type RecurrenceRule struct {
 
 // ScheduleService orchestrates validation and persistence for schedule operations.
 type ScheduleService struct {
-	schedules   ScheduleRepository
-	users       UserDirectory
-	rooms       RoomCatalog
-	recurrences RecurrenceRepository
-	idGenerator func() string
-	now         func() time.Time
-	logger      *slog.Logger
+	schedules    ScheduleRepository
+	users        UserDirectory
+	rooms        RoomCatalog
+	recurrences  RecurrenceRepository
+	warningCache *warningCache
+	idGenerator  func() string
+	now          func() time.Time
+	logger       *slog.Logger
 }
 
 // NewScheduleService wires dependencies for schedule operations.
@@ -83,13 +84,14 @@ func NewScheduleServiceWithLogger(schedules ScheduleRepository, users UserDirect
 		now = time.Now
 	}
 	return &ScheduleService{
-		schedules:   schedules,
-		users:       users,
-		rooms:       rooms,
-		recurrences: recurrences,
-		idGenerator: idGenerator,
-		now:         now,
-		logger:      defaultLogger(logger),
+		schedules:    schedules,
+		users:        users,
+		rooms:        rooms,
+		recurrences:  recurrences,
+		warningCache: newWarningCache(30*time.Second, 128, now),
+		idGenerator:  idGenerator,
+		now:          now,
+		logger:       defaultLogger(logger),
 	}
 }
 
@@ -174,6 +176,10 @@ func (s *ScheduleService) CreateSchedule(ctx context.Context, params CreateSched
 	if err != nil {
 		err = mapScheduleRepoError(err)
 		return
+	}
+
+	if s.warningCache != nil {
+		s.warningCache.Invalidate()
 	}
 
 	if input.Recurrence != nil && s.recurrences != nil {
@@ -273,6 +279,10 @@ func (s *ScheduleService) UpdateSchedule(ctx context.Context, params UpdateSched
 		return
 	}
 
+	if s.warningCache != nil {
+		s.warningCache.Invalidate()
+	}
+
 	if cleanupNeeded && s.recurrences != nil {
 		if err = s.recurrences.DeleteRecurrencesForSchedule(ctx, persisted.ID); err != nil {
 			return
@@ -320,6 +330,10 @@ func (s *ScheduleService) DeleteSchedule(ctx context.Context, principal Principa
 		return err
 	}
 
+	if s.warningCache != nil {
+		s.warningCache.Invalidate()
+	}
+
 	if s.recurrences != nil {
 		if err := s.recurrences.DeleteRecurrencesForSchedule(ctx, scheduleID); err != nil {
 			logger.ErrorContext(ctx, "failed to cleanup recurrences", "error", err, "error_kind", ErrorKind(err))
@@ -358,6 +372,10 @@ func (s *ScheduleService) ListSchedules(ctx context.Context, params ListSchedule
 	}()
 
 	filter := s.buildListFilter(params)
+	cacheKey := ""
+	if s.warningCache != nil {
+		cacheKey = buildWarningCacheKey(params, filter)
+	}
 
 	var results []Schedule
 	results, err = s.schedules.ListSchedules(ctx, filter)
@@ -384,7 +402,17 @@ func (s *ScheduleService) ListSchedules(ctx context.Context, params ListSchedule
 	if err != nil {
 		return nil, nil, err
 	}
+	if cacheKey != "" {
+		if cached, ok := s.warningCache.Get(cacheKey); ok {
+			warnings = cached
+			return
+		}
+	}
+
 	warnings = detectListConflicts(schedules)
+	if cacheKey != "" {
+		s.warningCache.Store(cacheKey, warnings)
+	}
 	return
 }
 
@@ -446,7 +474,7 @@ func toRecurrenceRule(rule RecurrenceRule) recurrence.Rule {
 	// This is a simplified conversion
 	return recurrence.Rule{
 		ID:         rule.ID,
-		ScheduleID: "", // Not needed for generation
+		ScheduleID: "",                         // Not needed for generation
 		Frequency:  recurrence.FrequencyWeekly, // Assuming weekly
 		Weekdays:   toTimeWeekdays(rule.Weekdays),
 		StartsOn:   rule.StartsOn,

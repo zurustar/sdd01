@@ -47,6 +47,11 @@ sequenceDiagram
 - タイムゾーンは JST 固定。`until` が未設定なら 90 日先まで生成（UI で拡張）。
 - 生成結果は永続化せず、API レスポンスでプレビューを返す（MVP）。
 
+### 性能検証と警告キャッシュ
+- `internal/recurrence/engine_benchmark_test.go` のベンチマークで週次ルールを 3 か月先まで生成し、`go test -bench=BenchmarkEngineGenerateOccurrences ./internal/recurrence` で遅延を継続監視する。
+- `ScheduleService` は一覧 API の警告生成結果を 30 秒間（最大 128 エントリ）メモリキャッシュし、CRUD 操作完了時に無効化することで繰り返し検出負荷を抑える。
+- キャッシュキーはリクエストパラメータとフィルター境界（参加者、期間、プリンシパル情報）で構成し、認可境界を越えた再利用を防ぐ。
+
 ## 削除フロー
 - `DELETE /schedules/{id}` は論理削除せず完全削除。
 - 参照整合性: `schedule_participants` と `recurrences` は ON DELETE CASCADE。
