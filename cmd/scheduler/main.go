@@ -67,7 +67,7 @@ func main() {
 	userService := application.NewUserServiceWithLogger(userRepo, idGenerator, now, logger)
 	authService := application.NewAuthServiceWithLogger(credentialStore, sessionRepo, nil, tokenGenerator, now, cfg.SessionTTL, logger)
 
-	authHandler := httptransport.NewAuthHandler(newAuthHandlerAdapter(authService), logger)
+	authHandler := httptransport.NewAuthHandler(authService, logger)
 	userHandler := httptransport.NewUserHandler(userService, logger)
 	roomHandler := httptransport.NewRoomHandler(roomService, logger)
 	scheduleHandler := httptransport.NewScheduleHandler(scheduleService, logger)
@@ -122,30 +122,6 @@ func randomHex(bytes int) string {
 		return fmt.Sprintf("fallback-%d", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(buf)
-}
-
-type authHandlerAdapter struct {
-	service *application.AuthService
-}
-
-func newAuthHandlerAdapter(service *application.AuthService) *authHandlerAdapter {
-	return &authHandlerAdapter{service: service}
-}
-
-func (a *authHandlerAdapter) Authenticate(ctx context.Context, email, password string) (httptransport.AuthSession, error) {
-	result, err := a.service.Authenticate(ctx, application.AuthenticateParams{Email: email, Password: password})
-	if err != nil {
-		return httptransport.AuthSession{}, err
-	}
-	return httptransport.AuthSession{
-		Token:     result.Session.Token,
-		ExpiresAt: result.Session.ExpiresAt,
-		Principal: application.Principal{UserID: result.User.ID, IsAdmin: result.User.IsAdmin},
-	}, nil
-}
-
-func (a *authHandlerAdapter) RevokeSession(ctx context.Context, token string) error {
-	return a.service.RevokeSession(ctx, token)
 }
 
 type userRepositoryAdapter struct {

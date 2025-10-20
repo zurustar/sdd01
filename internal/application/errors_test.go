@@ -3,8 +3,6 @@ package application
 import "testing"
 
 func TestValidationError_Error(t *testing.T) {
-	t.Parallel()
-
 	var err *ValidationError
 	if err.Error() != "" {
 		t.Fatalf("expected empty string for nil error, got %q", err.Error())
@@ -22,8 +20,6 @@ func TestValidationError_Error(t *testing.T) {
 }
 
 func TestValidationError_HasErrors(t *testing.T) {
-	t.Parallel()
-
 	if err := (&ValidationError{}).HasErrors(); err {
 		t.Fatalf("expected HasErrors to report false for empty error")
 	}
@@ -34,8 +30,6 @@ func TestValidationError_HasErrors(t *testing.T) {
 }
 
 func TestValidationError_AddAndMerge(t *testing.T) {
-	t.Parallel()
-
 	base := &ValidationError{}
 	base.add("first", "value")
 	if got := base.FieldErrors["first"]; got != "value" {

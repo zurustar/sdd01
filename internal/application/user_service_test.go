@@ -73,10 +73,7 @@ func (u *userRepoStub) ListUsers(ctx context.Context) ([]User, error) {
 }
 
 func TestUserService_CreateUser(t *testing.T) {
-	t.Parallel()
-
 	t.Run("requires administrator privileges", func(t *testing.T) {
-		t.Parallel()
 		svc := NewUserService(nil, nil, nil)
 
 		_, err := svc.CreateUser(context.Background(), CreateUserParams{
@@ -93,7 +90,6 @@ func TestUserService_CreateUser(t *testing.T) {
 	})
 
 	t.Run("validates input fields including email format", func(t *testing.T) {
-		t.Parallel()
 		svc := NewUserService(nil, nil, nil)
 
 		_, err := svc.CreateUser(context.Background(), CreateUserParams{
@@ -118,7 +114,6 @@ func TestUserService_CreateUser(t *testing.T) {
 	})
 
 	t.Run("persists users for administrators", func(t *testing.T) {
-		t.Parallel()
 		repo := &userRepoStub{}
 		now := time.Date(2024, time.March, 14, 9, 0, 0, 0, time.UTC)
 		svc := NewUserService(repo, func() string { return "user-1" }, func() time.Time { return now })
@@ -157,7 +152,6 @@ func TestUserService_CreateUser(t *testing.T) {
 	})
 
 	t.Run("maps duplicate email violations to sentinel errors", func(t *testing.T) {
-		t.Parallel()
 		repo := &userRepoStub{createErr: persistence.ErrDuplicate}
 		svc := NewUserService(repo, nil, nil)
 
@@ -176,10 +170,7 @@ func TestUserService_CreateUser(t *testing.T) {
 }
 
 func TestUserService_UpdateUser(t *testing.T) {
-	t.Parallel()
-
 	t.Run("requires administrator privileges", func(t *testing.T) {
-		t.Parallel()
 		svc := NewUserService(nil, nil, nil)
 
 		_, err := svc.UpdateUser(context.Background(), UpdateUserParams{
@@ -197,7 +188,6 @@ func TestUserService_UpdateUser(t *testing.T) {
 	})
 
 	t.Run("validates input fields", func(t *testing.T) {
-		t.Parallel()
 		repo := &userRepoStub{getUser: User{ID: "user-1", Email: "user@example.com", DisplayName: "User"}}
 		svc := NewUserService(repo, nil, nil)
 
@@ -223,7 +213,6 @@ func TestUserService_UpdateUser(t *testing.T) {
 	})
 
 	t.Run("propagates ErrNotFound when the user is missing", func(t *testing.T) {
-		t.Parallel()
 		repo := &userRepoStub{getErr: persistence.ErrNotFound}
 		svc := NewUserService(repo, nil, nil)
 
@@ -242,7 +231,6 @@ func TestUserService_UpdateUser(t *testing.T) {
 	})
 
 	t.Run("allows administrators to modify users", func(t *testing.T) {
-		t.Parallel()
 		existing := User{ID: "user-1", Email: "user@example.com", DisplayName: "User", CreatedAt: time.Now(), UpdatedAt: time.Now()}
 		repo := &userRepoStub{getUser: existing}
 		now := time.Date(2024, time.March, 15, 9, 0, 0, 0, time.UTC)
@@ -280,10 +268,7 @@ func TestUserService_UpdateUser(t *testing.T) {
 }
 
 func TestUserService_ListUsers(t *testing.T) {
-	t.Parallel()
-
 	t.Run("requires administrator privileges", func(t *testing.T) {
-		t.Parallel()
 		svc := NewUserService(nil, nil, nil)
 
 		_, err := svc.ListUsers(context.Background(), Principal{IsAdmin: false})
@@ -293,7 +278,6 @@ func TestUserService_ListUsers(t *testing.T) {
 	})
 
 	t.Run("returns users in deterministic order", func(t *testing.T) {
-		t.Parallel()
 		repo := &userRepoStub{list: []User{
 			{ID: "user-2", Email: "zeta@example.com", DisplayName: "Zeta"},
 			{ID: "user-3", Email: "Alpha@example.com", DisplayName: "Alpha"},
@@ -316,7 +300,6 @@ func TestUserService_ListUsers(t *testing.T) {
 	})
 
 	t.Run("supports filtering and pagination", func(t *testing.T) {
-		t.Parallel()
 		repo := &userRepoStub{list: []User{{ID: "user-1", Email: "user@example.com", DisplayName: "User"}}}
 		svc := NewUserService(repo, nil, nil)
 
@@ -332,10 +315,7 @@ func TestUserService_ListUsers(t *testing.T) {
 }
 
 func TestUserService_DeleteUser(t *testing.T) {
-	t.Parallel()
-
 	t.Run("requires administrator privileges", func(t *testing.T) {
-		t.Parallel()
 		svc := NewUserService(nil, nil, nil)
 
 		err := svc.DeleteUser(context.Background(), Principal{IsAdmin: false}, "user-1")
@@ -345,7 +325,6 @@ func TestUserService_DeleteUser(t *testing.T) {
 	})
 
 	t.Run("propagates ErrNotFound when the user is missing", func(t *testing.T) {
-		t.Parallel()
 		repo := &userRepoStub{deleteErr: persistence.ErrNotFound}
 		svc := NewUserService(repo, nil, nil)
 
@@ -356,7 +335,6 @@ func TestUserService_DeleteUser(t *testing.T) {
 	})
 
 	t.Run("allows administrators to delete users", func(t *testing.T) {
-		t.Parallel()
 		repo := &userRepoStub{}
 		svc := NewUserService(repo, nil, nil)
 

@@ -13,14 +13,8 @@ import (
 )
 
 type authService interface {
-	Authenticate(ctx context.Context, email, password string) (AuthSession, error)
+	Authenticate(ctx context.Context, params application.AuthenticateParams) (application.AuthenticateResult, error)
 	RevokeSession(ctx context.Context, token string) error
-}
-
-type AuthSession struct {
-	Token     string
-	ExpiresAt time.Time
-	Principal application.Principal
 }
 
 type AuthHandler struct {
@@ -57,11 +51,18 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	email := strings.TrimSpace(strings.ToLower(req.Email))
 	logger := h.log(r.Context(), "Login", "email", email)
 
-	session, err := h.service.Authenticate(r.Context(), email, req.Password)
+	result, err := h.service.Authenticate(r.Context(), application.AuthenticateParams{
+		Email:    email,
+		Password: req.Password,
+	})
 	if err != nil {
-		if errors.Is(err, application.ErrUnauthorized) {
+		if errors.Is(err, application.ErrInvalidCredentials) {
 			logger.ErrorContext(r.Context(), "authentication rejected", "error", err, "error_kind", application.ErrorKind(err))
-			h.responder.writeJSON(r.Context(), w, http.StatusUnauthorized, errorResponse{Message: "メールアドレスまたはパスワードが正しくありません。"})
+			errResp := errorResponse{
+				ErrorCode: "AUTH_INVALID_CREDENTIALS",
+				Message:   "メールアドレスまたはパスワードが正しくありません。",
+			}
+			h.responder.writeJSON(r.Context(), w, http.StatusUnauthorized, errResp)
 			return
 		}
 		logger.ErrorContext(r.Context(), "authentication failed", "error", err, "error_kind", application.ErrorKind(err))
@@ -69,19 +70,19 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	setSessionCookie(w, session.Token, session.ExpiresAt)
-	w.Header().Set("X-Session-Token", session.Token)
+	setSessionCookie(w, result.Session.Token, result.Session.ExpiresAt)
+	w.Header().Set("X-Session-Token", result.Session.Token)
 
 	logger.With(
-		"user_id", session.Principal.UserID,
+		"user_id", result.User.ID,
 	).InfoContext(r.Context(), "user authenticated")
 
 	h.responder.writeJSON(r.Context(), w, http.StatusOK, loginResponse{
-		Token:     session.Token,
-		ExpiresAt: session.ExpiresAt.UTC().Format(time.RFC3339Nano),
+		Token:     result.Session.Token,
+		ExpiresAt: result.Session.ExpiresAt.UTC().Format(time.RFC3339Nano),
 		Principal: principalDTO{
-			UserID:  session.Principal.UserID,
-			IsAdmin: session.Principal.IsAdmin,
+			UserID:  result.User.ID,
+			IsAdmin: result.User.IsAdmin,
 		},
 	})
 }

@@ -14,23 +14,22 @@ import (
 )
 
 func TestAuthHandlers(t *testing.T) {
-	t.Parallel()
-
 	t.Run("login issues session token via cookie and header", func(t *testing.T) {
-		t.Parallel()
 		issuedAt := time.Date(2024, 4, 1, 15, 0, 0, 0, time.UTC)
 		service := &fakeAuthService{
-			authenticateFunc: func(ctx context.Context, email, password string) (AuthSession, error) {
-				if email != "alice@example.com" {
-					t.Fatalf("expected trimmed email, got %q", email)
+			authenticateFunc: func(ctx context.Context, params application.AuthenticateParams) (application.AuthenticateResult, error) {
+				if params.Email != "alice@example.com" {
+					t.Fatalf("expected trimmed email, got %q", params.Email)
 				}
-				if password != "correcthorsebatterystaple" {
-					t.Fatalf("unexpected password: %q", password)
+				if params.Password != "correcthorsebatterystaple" {
+					t.Fatalf("unexpected password: %q", params.Password)
 				}
-				return AuthSession{
-					Token:     "session-token",
-					ExpiresAt: issuedAt,
-					Principal: application.Principal{UserID: "user-1", IsAdmin: true},
+				return application.AuthenticateResult{
+					User: application.User{ID: "user-1", IsAdmin: true},
+					Session: application.Session{
+						Token:     "session-token",
+						ExpiresAt: issuedAt,
+					},
 				}, nil
 			},
 		}
@@ -116,7 +115,6 @@ func TestAuthHandlers(t *testing.T) {
 	})
 
 	t.Run("logout revokes the session", func(t *testing.T) {
-		t.Parallel()
 		var revokedToken string
 		service := &fakeAuthService{
 			revokeFunc: func(ctx context.Context, token string) error {
@@ -167,10 +165,7 @@ func TestAuthHandlers(t *testing.T) {
 }
 
 func TestUserHandlers(t *testing.T) {
-	t.Parallel()
-
 	t.Run("require administrator authorization", func(t *testing.T) {
-		t.Parallel()
 		var capturedPrincipal application.Principal
 		service := &fakeUserService{
 			createUserFunc: func(ctx context.Context, params application.CreateUserParams) (application.User, error) {
@@ -210,7 +205,6 @@ func TestUserHandlers(t *testing.T) {
 	})
 
 	t.Run("return localized validation errors", func(t *testing.T) {
-		t.Parallel()
 		service := &fakeUserService{
 			createUserFunc: func(ctx context.Context, params application.CreateUserParams) (application.User, error) {
 				return application.User{}, &application.ValidationError{FieldErrors: map[string]string{
@@ -262,10 +256,7 @@ func TestUserHandlers(t *testing.T) {
 }
 
 func TestScheduleHandlers(t *testing.T) {
-	t.Parallel()
-
 	t.Run("enforce creator authorization rules", func(t *testing.T) {
-		t.Parallel()
 		service := &fakeScheduleService{
 			deleteScheduleFunc: func(ctx context.Context, principal application.Principal, scheduleID string) error {
 				if principal.UserID != "user-2" {
@@ -307,8 +298,6 @@ func TestScheduleHandlers(t *testing.T) {
 	})
 
 	t.Run("serialize conflict warnings in responses", func(t *testing.T) {
-		t.Parallel()
-
 		roomID := "room-1"
 		warnings := []application.ConflictWarning{
 			{ScheduleID: "existing-1", Type: "participant", ParticipantID: "user-2"},
@@ -386,8 +375,6 @@ func TestScheduleHandlers(t *testing.T) {
 	})
 
 	t.Run("serialize conflict warnings in update responses", func(t *testing.T) {
-		t.Parallel()
-
 		roomID := "room-99"
 		warnings := []application.ConflictWarning{
 			{ScheduleID: "existing-3", Type: "participant", ParticipantID: "user-5"},
@@ -467,7 +454,6 @@ func TestScheduleHandlers(t *testing.T) {
 	})
 
 	t.Run("expand recurrences in list responses", func(t *testing.T) {
-		t.Parallel()
 		occurrenceStart := mustParse(t, "2024-05-01T09:00:00+09:00")
 		occurrenceEnd := mustParse(t, "2024-05-01T10:00:00+09:00")
 		service := &fakeScheduleService{
@@ -546,7 +532,6 @@ func TestScheduleHandlers(t *testing.T) {
 	})
 
 	t.Run("map service sentinel errors to HTTP status codes", func(t *testing.T) {
-		t.Parallel()
 		cases := []struct {
 			name     string
 			err      error
@@ -560,8 +545,6 @@ func TestScheduleHandlers(t *testing.T) {
 		for _, tc := range cases {
 			tc := tc
 			t.Run(tc.name, func(t *testing.T) {
-				t.Parallel()
-
 				service := &fakeScheduleService{
 					updateScheduleFunc: func(ctx context.Context, params application.UpdateScheduleParams) (application.Schedule, []application.ConflictWarning, error) {
 						return application.Schedule{}, nil, tc.err
@@ -599,7 +582,6 @@ func TestScheduleHandlers(t *testing.T) {
 	})
 
 	t.Run("map day, week, and month query parameters to filter options", func(t *testing.T) {
-		t.Parallel()
 		var captured application.ListSchedulesParams
 		service := &fakeScheduleService{
 			listSchedulesFunc: func(ctx context.Context, params application.ListSchedulesParams) ([]application.Schedule, []application.ConflictWarning, error) {
@@ -639,7 +621,6 @@ func TestScheduleHandlers(t *testing.T) {
 	})
 
 	t.Run("default list view returns only caller's schedules", func(t *testing.T) {
-		t.Parallel()
 		var captured application.ListSchedulesParams
 		service := &fakeScheduleService{
 			listSchedulesFunc: func(ctx context.Context, params application.ListSchedulesParams) ([]application.Schedule, []application.ConflictWarning, error) {
@@ -666,7 +647,6 @@ func TestScheduleHandlers(t *testing.T) {
 	})
 
 	t.Run("explicit colleague filter exposes shared calendars", func(t *testing.T) {
-		t.Parallel()
 		var captured application.ListSchedulesParams
 		service := &fakeScheduleService{
 			listSchedulesFunc: func(ctx context.Context, params application.ListSchedulesParams) ([]application.Schedule, []application.ConflictWarning, error) {
@@ -692,7 +672,6 @@ func TestScheduleHandlers(t *testing.T) {
 	})
 
 	t.Run("missing or forbidden schedules map to 404 or 403", func(t *testing.T) {
-		t.Parallel()
 		cases := []struct {
 			name     string
 			err      error
@@ -706,8 +685,6 @@ func TestScheduleHandlers(t *testing.T) {
 		for _, tc := range cases {
 			tc := tc
 			t.Run(tc.name, func(t *testing.T) {
-				t.Parallel()
-
 				service := &fakeScheduleService{
 					deleteScheduleFunc: func(ctx context.Context, principal application.Principal, scheduleID string) error {
 						return tc.err
@@ -746,11 +723,7 @@ func TestScheduleHandlers(t *testing.T) {
 }
 
 func TestRoomHandlers(t *testing.T) {
-	t.Parallel()
-
 	t.Run("rejects unauthenticated requests for list", func(t *testing.T) {
-		t.Parallel()
-
 		service := &fakeRoomService{
 			listRoomsFunc: func(ctx context.Context, principal application.Principal) ([]application.Room, error) {
 				t.Fatal("ListRooms should not be called when principal is missing")
@@ -782,7 +755,6 @@ func TestRoomHandlers(t *testing.T) {
 	})
 
 	t.Run("allow non-admins to list rooms", func(t *testing.T) {
-		t.Parallel()
 		var capturedPrincipal application.Principal
 		service := &fakeRoomService{
 			listRoomsFunc: func(ctx context.Context, principal application.Principal) ([]application.Room, error) {
@@ -827,7 +799,6 @@ func TestRoomHandlers(t *testing.T) {
 	})
 
 	t.Run("require admin role for mutations", func(t *testing.T) {
-		t.Parallel()
 		t.Run("non-admin receives forbidden", func(t *testing.T) {
 			service := &fakeRoomService{
 				createRoomFunc: func(ctx context.Context, params application.CreateRoomParams) (application.Room, error) {
@@ -896,15 +867,15 @@ func TestRoomHandlers(t *testing.T) {
 }
 
 type fakeAuthService struct {
-	authenticateFunc func(context.Context, string, string) (AuthSession, error)
+	authenticateFunc func(context.Context, application.AuthenticateParams) (application.AuthenticateResult, error)
 	revokeFunc       func(context.Context, string) error
 }
 
-func (f *fakeAuthService) Authenticate(ctx context.Context, email, password string) (AuthSession, error) {
+func (f *fakeAuthService) Authenticate(ctx context.Context, params application.AuthenticateParams) (application.AuthenticateResult, error) {
 	if f.authenticateFunc != nil {
-		return f.authenticateFunc(ctx, email, password)
+		return f.authenticateFunc(ctx, params)
 	}
-	return AuthSession{}, nil
+	return application.AuthenticateResult{}, nil
 }
 
 func (f *fakeAuthService) RevokeSession(ctx context.Context, token string) error {

@@ -166,6 +166,7 @@ func translateValidationMessage(message string) string {
 }
 
 type errorResponse struct {
-	Message string            `json:"message"`
-	Errors  map[string]string `json:"errors,omitempty"`
+	ErrorCode string            `json:"error_code,omitempty"`
+	Message   string            `json:"message"`
+	Errors    map[string]string `json:"errors,omitempty"`
 }

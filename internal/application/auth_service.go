@@ -2,7 +2,6 @@ package application
 
 import (
 	"context"
-	"crypto/subtle"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -47,15 +46,7 @@ func NewAuthService(credentials CredentialStore, sessions SessionRepository, ver
 // NewAuthServiceWithLogger constructs an AuthService with a specified logger.
 func NewAuthServiceWithLogger(credentials CredentialStore, sessions SessionRepository, verify PasswordVerifier, tokenGenerator func() string, now func() time.Time, sessionTTL time.Duration, logger *slog.Logger) *AuthService {
 	if verify == nil {
-		verify = func(hashedPassword, password string) error {
-			if hashedPassword == "" || password == "" {
-				return ErrInvalidCredentials
-			}
-			if subtle.ConstantTimeCompare([]byte(hashedPassword), []byte(password)) != 1 {
-				return ErrInvalidCredentials
-			}
-			return nil
-		}
+		verify = VerifyPassword
 	}
 	if tokenGenerator == nil {
 		tokenGenerator = func() string { return "" }
