@@ -224,8 +224,6 @@ func compareStringSlices(got, want []string) string {
 }
 
 func TestScheduleService_CreateSchedule_ValidatesTemporalBounds(t *testing.T) {
-	t.Parallel()
-
 	repo := &scheduleRepoStub{}
 	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, func() string { return "schedule-1" }, func() time.Time { return mustJST(t, 9) })
 
@@ -251,8 +249,6 @@ func TestScheduleService_CreateSchedule_ValidatesTemporalBounds(t *testing.T) {
 }
 
 func TestScheduleService_CreateSchedule_RequiresAdminForDifferentCreator(t *testing.T) {
-	t.Parallel()
-
 	repo := &scheduleRepoStub{}
 	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, nil, func() time.Time { return mustJST(t, 9) })
 
@@ -273,8 +269,6 @@ func TestScheduleService_CreateSchedule_RequiresAdminForDifferentCreator(t *test
 }
 
 func TestScheduleService_CreateSchedule_ValidatesParticipantsExist(t *testing.T) {
-	t.Parallel()
-
 	repo := &scheduleRepoStub{}
 	users := &userDirectoryStub{missing: []string{"user-2"}}
 	svc := NewScheduleService(repo, users, &roomCatalogStub{exists: true}, nil, nil, func() time.Time { return mustJST(t, 9) })
@@ -301,8 +295,6 @@ func TestScheduleService_CreateSchedule_ValidatesParticipantsExist(t *testing.T)
 }
 
 func TestScheduleService_CreateSchedule_ValidatesRoomExistence(t *testing.T) {
-	t.Parallel()
-
 	repo := &scheduleRepoStub{}
 	roomID := "room-1"
 	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: false}, nil, nil, func() time.Time { return mustJST(t, 9) })
@@ -330,8 +322,6 @@ func TestScheduleService_CreateSchedule_ValidatesRoomExistence(t *testing.T) {
 }
 
 func TestScheduleService_CreateSchedule_ValidatesRequiredFields(t *testing.T) {
-	t.Parallel()
-
 	svc := NewScheduleService(&scheduleRepoStub{}, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, nil, func() time.Time { return mustJST(t, 9) })
 
 	_, _, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
@@ -358,8 +348,6 @@ func TestScheduleService_CreateSchedule_ValidatesRequiredFields(t *testing.T) {
 }
 
 func TestScheduleService_CreateSchedule_ValidatesWebConferenceURL(t *testing.T) {
-	t.Parallel()
-
 	svc := NewScheduleService(&scheduleRepoStub{}, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, nil, func() time.Time { return mustJST(t, 9) })
 
 	_, _, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
@@ -385,8 +373,6 @@ func TestScheduleService_CreateSchedule_ValidatesWebConferenceURL(t *testing.T) 
 }
 
 func TestScheduleService_CreateSchedule_PreventsCreatorSpoofingForRegularUsers(t *testing.T) {
-	t.Parallel()
-
 	svc := NewScheduleService(&scheduleRepoStub{}, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, nil, nil)
 
 	_, _, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
@@ -406,8 +392,6 @@ func TestScheduleService_CreateSchedule_PreventsCreatorSpoofingForRegularUsers(t
 }
 
 func TestScheduleService_CreateSchedule_AllowsAdministratorOverrides(t *testing.T) {
-	t.Parallel()
-
 	repo := &scheduleRepoStub{}
 	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, func() string { return "schedule-1" }, func() time.Time { return mustJST(t, 9) })
 
@@ -432,8 +416,6 @@ func TestScheduleService_CreateSchedule_AllowsAdministratorOverrides(t *testing.
 }
 
 func TestScheduleService_CreateSchedule_VerifiesParticipantsExist(t *testing.T) {
-	t.Parallel()
-
 	svc := NewScheduleService(&scheduleRepoStub{}, &userDirectoryStub{missing: []string{"user-2"}}, &roomCatalogStub{exists: true}, nil, nil, func() time.Time { return mustJST(t, 9) })
 
 	_, _, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
@@ -458,8 +440,6 @@ func TestScheduleService_CreateSchedule_VerifiesParticipantsExist(t *testing.T) 
 }
 
 func TestScheduleService_CreateSchedule_VerifiesRoomExistence(t *testing.T) {
-	t.Parallel()
-
 	roomID := "room-1"
 	svc := NewScheduleService(&scheduleRepoStub{}, &userDirectoryStub{}, &roomCatalogStub{exists: false}, nil, nil, func() time.Time { return mustJST(t, 9) })
 
@@ -486,8 +466,6 @@ func TestScheduleService_CreateSchedule_VerifiesRoomExistence(t *testing.T) {
 }
 
 func TestScheduleService_CreateSchedule_AllowsHybridMeetings(t *testing.T) {
-	t.Parallel()
-
 	roomID := "room-1"
 	repo := &scheduleRepoStub{schedule: Schedule{ID: "schedule-1", CreatorID: "user-1"}}
 	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, func() string { return "schedule-1" }, func() time.Time { return mustJST(t, 9) })
@@ -519,8 +497,6 @@ func TestScheduleService_CreateSchedule_AllowsHybridMeetings(t *testing.T) {
 }
 
 func TestScheduleService_CreateSchedule_ReturnsConflictWarnings(t *testing.T) {
-	t.Parallel()
-
 	roomID := "room-1"
 	repo := &scheduleRepoStub{
 		list: []Schedule{{
@@ -590,8 +566,6 @@ func TestScheduleService_CreateSchedule_ReturnsConflictWarnings(t *testing.T) {
 }
 
 func TestScheduleService_CreateSchedule_PersistsWhenConflictListMissing(t *testing.T) {
-	t.Parallel()
-
 	repo := &scheduleRepoStub{listErr: ErrNotFound}
 	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, func() string { return "schedule-new" }, func() time.Time { return mustJST(t, 9) })
 
@@ -624,8 +598,6 @@ func TestScheduleService_CreateSchedule_PersistsWhenConflictListMissing(t *testi
 }
 
 func TestScheduleService_UpdateSchedule_ValidatesCreatorImmutability(t *testing.T) {
-	t.Parallel()
-
 	repo := &scheduleRepoStub{schedule: Schedule{
 		ID:             "schedule-1",
 		CreatorID:      "user-1",
@@ -661,8 +633,6 @@ func TestScheduleService_UpdateSchedule_ValidatesCreatorImmutability(t *testing.
 }
 
 func TestScheduleService_UpdateSchedule_BlocksUnauthorizedUsers(t *testing.T) {
-	t.Parallel()
-
 	repo := &scheduleRepoStub{schedule: Schedule{
 		ID:             "schedule-1",
 		CreatorID:      "user-1",
@@ -691,8 +661,6 @@ func TestScheduleService_UpdateSchedule_BlocksUnauthorizedUsers(t *testing.T) {
 }
 
 func TestScheduleService_UpdateSchedule_ValidatesParticipantsExist(t *testing.T) {
-	t.Parallel()
-
 	existing := Schedule{
 		ID:             "schedule-1",
 		CreatorID:      "user-1",
@@ -728,8 +696,6 @@ func TestScheduleService_UpdateSchedule_ValidatesParticipantsExist(t *testing.T)
 }
 
 func TestScheduleService_UpdateSchedule_ValidatesRoomExistence(t *testing.T) {
-	t.Parallel()
-
 	existing := Schedule{
 		ID:             "schedule-1",
 		CreatorID:      "user-1",
@@ -766,8 +732,6 @@ func TestScheduleService_UpdateSchedule_ValidatesRoomExistence(t *testing.T) {
 }
 
 func TestScheduleService_UpdateSchedule_AllowsAdministratorOverride(t *testing.T) {
-	t.Parallel()
-
 	repo := &scheduleRepoStub{schedule: Schedule{
 		ID:             "schedule-1",
 		CreatorID:      "user-1",
@@ -800,8 +764,6 @@ func TestScheduleService_UpdateSchedule_AllowsAdministratorOverride(t *testing.T
 }
 
 func TestScheduleService_UpdateSchedule_ValidatesTemporalBounds(t *testing.T) {
-	t.Parallel()
-
 	repo := &scheduleRepoStub{schedule: Schedule{
 		ID:             "schedule-1",
 		CreatorID:      "user-1",
@@ -835,8 +797,6 @@ func TestScheduleService_UpdateSchedule_ValidatesTemporalBounds(t *testing.T) {
 }
 
 func TestScheduleService_DeleteSchedule_BlocksUnauthorizedUsers(t *testing.T) {
-	t.Parallel()
-
 	repo := &scheduleRepoStub{schedule: Schedule{ID: "schedule-1", CreatorID: "user-1"}}
 	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, nil, nil)
 
@@ -847,8 +807,6 @@ func TestScheduleService_DeleteSchedule_BlocksUnauthorizedUsers(t *testing.T) {
 }
 
 func TestScheduleService_DeleteSchedule_AllowsAdministratorOverride(t *testing.T) {
-	t.Parallel()
-
 	repo := &scheduleRepoStub{schedule: Schedule{ID: "schedule-1", CreatorID: "user-1"}}
 	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, nil, nil)
 
@@ -858,8 +816,6 @@ func TestScheduleService_DeleteSchedule_AllowsAdministratorOverride(t *testing.T
 }
 
 func TestScheduleService_UpdateSchedule_ReturnsNotFoundWhenMissing(t *testing.T) {
-	t.Parallel()
-
 	repo := &scheduleRepoStub{}
 	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, nil, func() time.Time { return mustJST(t, 9) })
 
@@ -881,8 +837,6 @@ func TestScheduleService_UpdateSchedule_ReturnsNotFoundWhenMissing(t *testing.T)
 }
 
 func TestScheduleService_DeleteSchedule_ReturnsNotFoundWhenMissing(t *testing.T) {
-	t.Parallel()
-
 	repo := &scheduleRepoStub{}
 	svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, nil, nil)
 
@@ -893,11 +847,7 @@ func TestScheduleService_DeleteSchedule_ReturnsNotFoundWhenMissing(t *testing.T)
 }
 
 func TestScheduleService_ListSchedules_FilteringAndOrdering(t *testing.T) {
-	t.Parallel()
-
 	t.Run("defaults to returning only the principal's schedules when no participant filter provided", func(t *testing.T) {
-		t.Parallel()
-
 		repo := &scheduleRepoStub{
 			list: []Schedule{{
 				ID:             "schedule-1",
@@ -932,8 +882,6 @@ func TestScheduleService_ListSchedules_FilteringAndOrdering(t *testing.T) {
 	})
 
 	t.Run("allows explicit participant filter to surface colleague schedules without leaking others", func(t *testing.T) {
-		t.Parallel()
-
 		repo := &scheduleRepoStub{list: []Schedule{}}
 		svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, nil, nil)
 
@@ -952,8 +900,6 @@ func TestScheduleService_ListSchedules_FilteringAndOrdering(t *testing.T) {
 	})
 
 	t.Run("returns only principal schedules by default even when repository stores colleagues", func(t *testing.T) {
-		t.Parallel()
-
 		repo := &filteringScheduleRepo{
 			schedules: []Schedule{
 				{
@@ -989,8 +935,6 @@ func TestScheduleService_ListSchedules_FilteringAndOrdering(t *testing.T) {
 	})
 
 	t.Run("respects explicit participant selections while keeping the principal's schedules", func(t *testing.T) {
-		t.Parallel()
-
 		repo := &filteringScheduleRepo{
 			schedules: []Schedule{
 				{
@@ -1037,8 +981,6 @@ func TestScheduleService_ListSchedules_FilteringAndOrdering(t *testing.T) {
 	})
 
 	t.Run("orders schedules chronologically and deterministically", func(t *testing.T) {
-		t.Parallel()
-
 		repo := &scheduleRepoStub{
 			list: []Schedule{
 				{
@@ -1085,8 +1027,6 @@ func TestScheduleService_ListSchedules_FilteringAndOrdering(t *testing.T) {
 	})
 
 	t.Run("expands recurrence hooks for requested period windows", func(t *testing.T) {
-		t.Parallel()
-
 		repo := &scheduleRepoStub{list: []Schedule{}}
 		svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, nil, nil)
 
@@ -1099,8 +1039,6 @@ func TestScheduleService_ListSchedules_FilteringAndOrdering(t *testing.T) {
 	})
 
 	t.Run("propagates detector warnings alongside successful results", func(t *testing.T) {
-		t.Parallel()
-
 		roomID := "room-42"
 		repo := &scheduleRepoStub{
 			list: []Schedule{
@@ -1252,11 +1190,7 @@ func TestScheduleService_UpdateSchedule_SavesRecurrence(t *testing.T) {
 }
 
 func TestScheduleService_ListSchedules_PeriodFilters(t *testing.T) {
-	t.Parallel()
-
 	t.Run("maps day/week/month presets into StartsAfter/EndsBefore filters", func(t *testing.T) {
-		t.Parallel()
-
 		repo := &scheduleRepoStub{}
 		svc := NewScheduleService(repo, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, nil, nil)
 
@@ -1288,17 +1222,12 @@ func TestScheduleService_ListSchedules_PeriodFilters(t *testing.T) {
 	})
 
 	t.Run("clips recurrence expansion to requested window", func(t *testing.T) {
-		t.Parallel()
 		t.Skip("TODO: verify recurring occurrences outside the window are excluded")
 	})
 }
 
 func TestScheduleService_CreateSchedule_EnforcesJapanStandardTime(t *testing.T) {
-	t.Parallel()
-
 	t.Run("rejects start times outside Asia/Tokyo", func(t *testing.T) {
-		t.Parallel()
-
 		svc := NewScheduleService(&scheduleRepoStub{}, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, nil, nil)
 
 		_, _, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
@@ -1323,8 +1252,6 @@ func TestScheduleService_CreateSchedule_EnforcesJapanStandardTime(t *testing.T) 
 	})
 
 	t.Run("rejects end times outside Asia/Tokyo", func(t *testing.T) {
-		t.Parallel()
-
 		svc := NewScheduleService(&scheduleRepoStub{}, &userDirectoryStub{}, &roomCatalogStub{exists: true}, nil, nil, nil)
 
 		_, _, err := svc.CreateSchedule(context.Background(), CreateScheduleParams{
@@ -1350,10 +1277,7 @@ func TestScheduleService_CreateSchedule_EnforcesJapanStandardTime(t *testing.T) 
 }
 
 func TestScheduleService_UpdateSchedule_CleansUpRecurrences(t *testing.T) {
-	t.Parallel()
-
 	t.Run("removes obsolete recurrence rules when participants change", func(t *testing.T) {
-		t.Parallel()
 		repo := &scheduleRepoStub{
 			schedule: Schedule{
 				ID:             "schedule-1",
@@ -1396,7 +1320,6 @@ func TestScheduleService_UpdateSchedule_CleansUpRecurrences(t *testing.T) {
 	})
 
 	t.Run("maintains recurrence integrity when dates shift", func(t *testing.T) {
-		t.Parallel()
 		repo := &scheduleRepoStub{
 			schedule: Schedule{
 				ID:             "schedule-2",
@@ -1443,10 +1366,7 @@ func TestScheduleService_UpdateSchedule_CleansUpRecurrences(t *testing.T) {
 }
 
 func TestScheduleService_DeleteSchedule_CleansUpRecurrences(t *testing.T) {
-	t.Parallel()
-
 	t.Run("removes recurrence definitions alongside the schedule", func(t *testing.T) {
-		t.Parallel()
 		repo := &scheduleRepoStub{
 			schedule: Schedule{
 				ID:        "schedule-3",
@@ -1468,8 +1388,6 @@ func TestScheduleService_DeleteSchedule_CleansUpRecurrences(t *testing.T) {
 }
 
 func TestScheduleService_UpdateSchedule_PersistsDespiteWarnings(t *testing.T) {
-	t.Parallel()
-
 	roomID := "room-2"
 	repo := &scheduleRepoStub{
 		schedule: Schedule{

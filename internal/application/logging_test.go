@@ -7,8 +7,6 @@ import (
 )
 
 func TestDefaultLogger(t *testing.T) {
-	t.Parallel()
-
 	custom := slog.New(slog.NewTextHandler(io.Discard, nil))
 	if got := defaultLogger(custom); got != custom {
 		t.Fatalf("expected custom logger to be returned")

@@ -8,26 +8,26 @@ import (
 )
 
 func TestAuthService_Authenticate(t *testing.T) {
-	t.Parallel()
-
 	t.Run("verifies password hashing edge cases", func(t *testing.T) {
-		t.Parallel()
 		t.Skip("TODO: cover authenticate with legacy hashes and malformed encodings")
 	})
 
 	t.Run("enforces account lockout when configured", func(t *testing.T) {
-		t.Parallel()
 		t.Skip("TODO: ensure repeated failures trigger lockout behavior")
 	})
 
 	t.Run("issues sessions for valid credentials", func(t *testing.T) {
-		t.Parallel()
+		password := "secret"
+		hash, err := CreatePasswordHash(password, DefaultArgon2idParams)
+		if err != nil {
+			t.Fatalf("failed to create password hash: %v", err)
+		}
 
 		now := time.Now().UTC()
 		creds := &credentialStoreStub{
 			credentials: UserCredentials{
 				User:         User{ID: "user-1", Email: "user@example.com"},
-				PasswordHash: "secret",
+				PasswordHash: hash,
 			},
 		}
 
@@ -59,8 +59,6 @@ func TestAuthService_Authenticate(t *testing.T) {
 	})
 
 	t.Run("rejects disabled accounts", func(t *testing.T) {
-		t.Parallel()
-
 		creds := &credentialStoreStub{credentials: UserCredentials{User: User{ID: "user"}, Disabled: true}}
 		svc := NewAuthService(creds, nil, nil, nil, time.Now, time.Hour)
 
@@ -71,50 +69,57 @@ func TestAuthService_Authenticate(t *testing.T) {
 	})
 
 	t.Run("rejects invalid credentials with sentinel error", func(t *testing.T) {
-		t.Parallel()
+		hash, err := CreatePasswordHash("expected", DefaultArgon2idParams)
+		if err != nil {
+			t.Fatalf("failed to create password hash: %v", err)
+		}
 
 		creds := &credentialStoreStub{
-			credentials: UserCredentials{User: User{ID: "user"}, PasswordHash: "expected"},
+			credentials: UserCredentials{User: User{ID: "user"}, PasswordHash: hash},
 		}
 		svc := NewAuthService(creds, nil, nil, nil, time.Now, time.Hour)
 
-		_, err := svc.Authenticate(context.Background(), AuthenticateParams{Email: "user@example.com", Password: "wrong"})
+		_, err = svc.Authenticate(context.Background(), AuthenticateParams{Email: "user@example.com", Password: "wrong"})
 		if !errors.Is(err, ErrInvalidCredentials) {
 			t.Fatalf("expected ErrInvalidCredentials, got %v", err)
 		}
 	})
 
 	t.Run("propagates repository failures", func(t *testing.T) {
-		t.Parallel()
-
+		hash, err := CreatePasswordHash("secret", DefaultArgon2idParams)
+		if err != nil {
+			t.Fatalf("failed to create password hash: %v", err)
+		}
 		expected := errors.New("boom")
 		creds := &credentialStoreStub{
-			credentials: UserCredentials{User: User{ID: "user"}, PasswordHash: "secret"},
+			credentials: UserCredentials{User: User{ID: "user"}, PasswordHash: hash},
 		}
 		repo := newSessionRepositoryStub()
 		repo.createErr = expected
 
 		svc := NewAuthService(creds, repo, nil, func() string { return "token" }, time.Now, time.Hour)
 
-		_, err := svc.Authenticate(context.Background(), AuthenticateParams{Email: "user@example.com", Password: "secret"})
+		_, err = svc.Authenticate(context.Background(), AuthenticateParams{Email: "user@example.com", Password: "secret"})
 		if !errors.Is(err, expected) {
 			t.Fatalf("expected error %v, got %v", expected, err)
 		}
 	})
 
 	t.Run("propagates cleanup failures", func(t *testing.T) {
-		t.Parallel()
-
+		hash, err := CreatePasswordHash("secret", DefaultArgon2idParams)
+		if err != nil {
+			t.Fatalf("failed to create password hash: %v", err)
+		}
 		expected := errors.New("cleanup-failed")
 		creds := &credentialStoreStub{
-			credentials: UserCredentials{User: User{ID: "user"}, PasswordHash: "secret"},
+			credentials: UserCredentials{User: User{ID: "user"}, PasswordHash: hash},
 		}
 		repo := newSessionRepositoryStub()
 		repo.deleteErr = expected
 
 		svc := NewAuthService(creds, repo, nil, func() string { return "token" }, time.Now, time.Hour)
 
-		_, err := svc.Authenticate(context.Background(), AuthenticateParams{Email: "user@example.com", Password: "secret"})
+		_, err = svc.Authenticate(context.Background(), AuthenticateParams{Email: "user@example.com", Password: "secret"})
 		if !errors.Is(err, expected) {
 			t.Fatalf("expected cleanup error %v, got %v", expected, err)
 		}
@@ -514,8 +519,8 @@ func TestNewAuthServiceWithLogger_Defaults(t *testing.T) {
 	if svc.verifyPassword == nil {
 		t.Fatalf("expected default password verifier")
 	}
-	if err := svc.verifyPassword("", ""); !errors.Is(err, ErrInvalidCredentials) {
-		t.Fatalf("expected default verifier to reject empty passwords")
+	if err := svc.verifyPassword("", ""); !errors.Is(err, ErrInvalidPasswordHash) {
+		t.Fatalf("expected default verifier to reject empty passwords, got %v", err)
 	}
 	if svc.tokenGenerator == nil {
 		t.Fatalf("expected default token generator")

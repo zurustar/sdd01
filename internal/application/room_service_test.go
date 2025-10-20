@@ -73,10 +73,7 @@ func (r *roomRepoStub) ListRooms(ctx context.Context) ([]Room, error) {
 }
 
 func TestRoomService_CreateRoom(t *testing.T) {
-	t.Parallel()
-
 	t.Run("requires administrator privileges", func(t *testing.T) {
-		t.Parallel()
 		svc := NewRoomService(nil, nil, nil)
 
 		_, err := svc.CreateRoom(context.Background(), CreateRoomParams{
@@ -94,7 +91,6 @@ func TestRoomService_CreateRoom(t *testing.T) {
 	})
 
 	t.Run("validates required attributes", func(t *testing.T) {
-		t.Parallel()
 		svc := NewRoomService(nil, nil, nil)
 
 		_, err := svc.CreateRoom(context.Background(), CreateRoomParams{
@@ -123,7 +119,6 @@ func TestRoomService_CreateRoom(t *testing.T) {
 	})
 
 	t.Run("persists rooms for administrators", func(t *testing.T) {
-		t.Parallel()
 		repo := &roomRepoStub{}
 		now := time.Date(2024, time.March, 14, 9, 0, 0, 0, time.UTC)
 		facility := "  Projector  "
@@ -167,7 +162,6 @@ func TestRoomService_CreateRoom(t *testing.T) {
 	})
 
 	t.Run("maps repository errors to sentinel failures", func(t *testing.T) {
-		t.Parallel()
 		repo := &roomRepoStub{createErr: persistence.ErrDuplicate}
 		svc := NewRoomService(repo, nil, nil)
 
@@ -187,10 +181,7 @@ func TestRoomService_CreateRoom(t *testing.T) {
 }
 
 func TestRoomService_UpdateRoom(t *testing.T) {
-	t.Parallel()
-
 	t.Run("requires administrator privileges", func(t *testing.T) {
-		t.Parallel()
 		svc := NewRoomService(nil, nil, nil)
 
 		_, err := svc.UpdateRoom(context.Background(), UpdateRoomParams{
@@ -210,7 +201,6 @@ func TestRoomService_UpdateRoom(t *testing.T) {
 	})
 
 	t.Run("validates required attributes", func(t *testing.T) {
-		t.Parallel()
 		repo := &roomRepoStub{getRoom: Room{ID: "room-1", Name: "Sakura", Location: "10F", Capacity: 20}}
 		svc := NewRoomService(repo, nil, nil)
 
@@ -240,7 +230,6 @@ func TestRoomService_UpdateRoom(t *testing.T) {
 	})
 
 	t.Run("propagates ErrNotFound when the room is missing", func(t *testing.T) {
-		t.Parallel()
 		repo := &roomRepoStub{getErr: persistence.ErrNotFound}
 		svc := NewRoomService(repo, nil, nil)
 
@@ -261,7 +250,6 @@ func TestRoomService_UpdateRoom(t *testing.T) {
 	})
 
 	t.Run("persists updated attributes for administrators", func(t *testing.T) {
-		t.Parallel()
 		existing := Room{ID: "room-1", Name: "Sakura", Location: "10F", Capacity: 20, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 		repo := &roomRepoStub{getRoom: existing}
 		now := time.Date(2024, time.March, 15, 9, 0, 0, 0, time.UTC)
@@ -308,10 +296,7 @@ func TestRoomService_UpdateRoom(t *testing.T) {
 }
 
 func TestRoomService_DeleteRoom(t *testing.T) {
-	t.Parallel()
-
 	t.Run("requires administrator privileges", func(t *testing.T) {
-		t.Parallel()
 		svc := NewRoomService(nil, nil, nil)
 
 		err := svc.DeleteRoom(context.Background(), Principal{IsAdmin: false}, "room-1")
@@ -321,7 +306,6 @@ func TestRoomService_DeleteRoom(t *testing.T) {
 	})
 
 	t.Run("propagates ErrNotFound when the room is missing", func(t *testing.T) {
-		t.Parallel()
 		repo := &roomRepoStub{deleteErr: persistence.ErrNotFound}
 		svc := NewRoomService(repo, nil, nil)
 
@@ -332,7 +316,6 @@ func TestRoomService_DeleteRoom(t *testing.T) {
 	})
 
 	t.Run("allows administrators to delete rooms", func(t *testing.T) {
-		t.Parallel()
 		repo := &roomRepoStub{}
 		svc := NewRoomService(repo, nil, nil)
 
@@ -347,10 +330,7 @@ func TestRoomService_DeleteRoom(t *testing.T) {
 }
 
 func TestRoomService_ListRooms(t *testing.T) {
-	t.Parallel()
-
 	t.Run("is accessible to all authenticated employees", func(t *testing.T) {
-		t.Parallel()
 		rooms := []Room{{ID: "room-1", Name: "A", Location: "1F", Capacity: 5}}
 		repo := &roomRepoStub{list: rooms}
 		svc := NewRoomService(repo, nil, nil)
@@ -366,7 +346,6 @@ func TestRoomService_ListRooms(t *testing.T) {
 	})
 
 	t.Run("returns rooms in deterministic order", func(t *testing.T) {
-		t.Parallel()
 		repo := &roomRepoStub{list: []Room{
 			{ID: "room-2", Name: "Beta", Location: "2F", Capacity: 10},
 			{ID: "room-3", Name: "alpha", Location: "3F", Capacity: 8},
@@ -390,8 +369,6 @@ func TestRoomService_ListRooms(t *testing.T) {
 }
 
 func TestMapRoomRepoError(t *testing.T) {
-	t.Parallel()
-
 	unexpected := errors.New("boom")
 
 	tests := map[string]struct {
@@ -408,8 +385,6 @@ func TestMapRoomRepoError(t *testing.T) {
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
 			result := mapRoomRepoError(tc.err)
 
 			switch expected := tc.expected.(type) {
