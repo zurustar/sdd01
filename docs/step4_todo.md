@@ -18,9 +18,12 @@
 - [ ] 繰り返しエンジンの性能検証と警告キャッシュ戦略を設計し、負荷時の応答遅延リスクを解消する。【F:docs/scheduling_workflows.md†L45-L54】【F:docs/step4_handoff.md†L11-L13】
 
 ## グループD: UI・ユーザードキュメント
-- [ ] 週次プランナー UI のモックと主要遷移を整備し、`docs/user_quickstart.md` にスクリーンショットを追加する。【F:docs/enterprise_scheduler_spec.md†L38-L75】【F:docs/step4_handoff.md†L3-L4】
-- [ ] マルチユーザー表示や会議室選択など UI 要件を満たすコンポーネントを実装し、仕様のビュー切り替え要件を検証する。【F:docs/enterprise_scheduler_spec.md†L38-L84】
-- [ ] UX ドキュメントとエラーメッセージのローカライズガイドラインを整備し、API との整合を図る。【F:docs/authentication_authorization.md†L30-L36】【F:docs/user_quickstart.md†L1-L80】
+- [v] (作業メモ) 週次プランナー UI モックの記述とスクリーンショット追記方法を整理する。
+- [v] (作業メモ) マルチユーザー表示など UI 要件の補足説明方針を固める。
+- [v] (作業メモ) UX ドキュメントとエラーメッセージのローカライズ項目の更新手順をまとめる。
+- [v] 週次プランナー UI のモックと主要遷移を整備し、`docs/user_quickstart.md` にスクリーンショットを追加する。【F:docs/enterprise_scheduler_spec.md†L38-L75】【F:docs/step4_handoff.md†L3-L4】
+- [v] マルチユーザー表示や会議室選択など UI 要件を満たすコンポーネントを実装し、仕様のビュー切り替え要件を検証する。【F:docs/enterprise_scheduler_spec.md†L38-L84】
+- [v] UX ドキュメントとエラーメッセージのローカライズガイドラインを整備し、API との整合を図る。【F:docs/authentication_authorization.md†L30-L36】【F:docs/user_quickstart.md†L1-L80】
 
 ## グループE: DevOps・CI
 - [ ] GitHub Actions で lint / unit / race / coverage を実行するワークフローを追加し、Step4 開始時の CI 空白を解消する。【F:docs/documentation_plan.md†L40-L46】【F:docs/step4_handoff.md†L3-L6】
