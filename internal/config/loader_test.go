@@ -16,7 +16,9 @@ func TestLoader_ParseEnvironment(t *testing.T) {
 			"SCHEDULER_MAX_ROOM_CAPACITY",
 		}
 		for _, key := range unset {
-			os.Unsetenv(key)
+			if err := os.Unsetenv(key); err != nil {
+				t.Fatalf("failed to unset %s: %v", key, err)
+			}
 		}
 
 		const secret = "super-secret"
@@ -39,9 +41,15 @@ func TestLoader_ParseEnvironment(t *testing.T) {
 	})
 
 	t.Run("errors when required values are missing", func(t *testing.T) {
-		os.Unsetenv("SCHEDULER_SESSION_SECRET")
-		os.Unsetenv("SCHEDULER_HTTP_PORT")
-		os.Unsetenv("SCHEDULER_SQLITE_DSN")
+		for _, key := range []string{
+			"SCHEDULER_SESSION_SECRET",
+			"SCHEDULER_HTTP_PORT",
+			"SCHEDULER_SQLITE_DSN",
+		} {
+			if err := os.Unsetenv(key); err != nil {
+				t.Fatalf("failed to unset %s: %v", key, err)
+			}
+		}
 
 		_, err := Load()
 		if err == nil {
@@ -57,12 +65,8 @@ func TestLoader_ParseEnvironment(t *testing.T) {
 		t.Setenv("SCHEDULER_SESSION_SECRET", "secret-value")
 		t.Setenv("SCHEDULER_HTTP_PORT", "9090")
 		t.Setenv("SCHEDULER_SQLITE_DSN", "file:/tmp/scheduler.db")
-		os.Setenv("SCHEDULER_SESSION_TTL", "24h")
-		os.Setenv("SCHEDULER_MAX_ROOM_CAPACITY", "50")
-		defer func() {
-			os.Unsetenv("SCHEDULER_SESSION_TTL")
-			os.Unsetenv("SCHEDULER_MAX_ROOM_CAPACITY")
-		}()
+		t.Setenv("SCHEDULER_SESSION_TTL", "24h")
+		t.Setenv("SCHEDULER_MAX_ROOM_CAPACITY", "50")
 
 		cfg, err := Load()
 		if err != nil {

@@ -506,11 +506,7 @@ func needsRecurrenceCleanup(before, after Schedule) bool {
 
 	beforeParticipants := sortStrings(before.ParticipantIDs)
 	afterParticipants := sortStrings(after.ParticipantIDs)
-	if !slices.Equal(beforeParticipants, afterParticipants) {
-		return true
-	}
-
-	return false
+	return !slices.Equal(beforeParticipants, afterParticipants)
 }
 
 func sortStrings(values []string) []string {

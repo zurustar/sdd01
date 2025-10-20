@@ -388,3 +388,48 @@ func TestRoomService_ListRooms(t *testing.T) {
 		}
 	})
 }
+
+func TestMapRoomRepoError(t *testing.T) {
+	t.Parallel()
+
+	unexpected := errors.New("boom")
+
+	tests := map[string]struct {
+		err      error
+		expected error
+	}{
+		"nil":                   {err: nil, expected: nil},
+		"application not found": {err: ErrNotFound, expected: ErrNotFound},
+		"persistence not found": {err: persistence.ErrNotFound, expected: ErrNotFound},
+		"duplicate":             {err: persistence.ErrDuplicate, expected: ErrAlreadyExists},
+		"constraint":            {err: persistence.ErrConstraintViolation, expected: &ValidationError{}},
+		"unexpected":            {err: unexpected, expected: unexpected},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			result := mapRoomRepoError(tc.err)
+
+			switch expected := tc.expected.(type) {
+			case nil:
+				if result != nil {
+					t.Fatalf("expected nil, got %v", result)
+				}
+			case *ValidationError:
+				vErr, ok := result.(*ValidationError)
+				if !ok {
+					t.Fatalf("expected ValidationError, got %T", result)
+				}
+				if msg, ok := vErr.FieldErrors["capacity"]; !ok || msg == "" {
+					t.Fatalf("expected capacity validation message, got %v", vErr.FieldErrors)
+				}
+			default:
+				if !errors.Is(result, expected) {
+					t.Fatalf("expected %v, got %v", expected, result)
+				}
+			}
+		})
+	}
+}

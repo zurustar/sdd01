@@ -506,3 +506,30 @@ func cloneSession(session Session) Session {
 	}
 	return clone
 }
+
+func TestNewAuthServiceWithLogger_Defaults(t *testing.T) {
+	t.Parallel()
+
+	svc := NewAuthServiceWithLogger(nil, nil, nil, nil, nil, 0, nil)
+	if svc.verifyPassword == nil {
+		t.Fatalf("expected default password verifier")
+	}
+	if err := svc.verifyPassword("", ""); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("expected default verifier to reject empty passwords")
+	}
+	if svc.tokenGenerator == nil {
+		t.Fatalf("expected default token generator")
+	}
+	if svc.tokenGenerator() != "" {
+		t.Fatalf("expected default token generator to return empty string")
+	}
+	if svc.now == nil {
+		t.Fatalf("expected default clock")
+	}
+	if svc.sessionTTL != 24*time.Hour {
+		t.Fatalf("expected default session TTL, got %v", svc.sessionTTL)
+	}
+	if svc.logger == nil {
+		t.Fatalf("expected default logger assignment")
+	}
+}
