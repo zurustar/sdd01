@@ -81,7 +81,7 @@ func main() {
 
 	protected := httptransport.RequireSession(authService, logger)(router)
 	handler := httptransport.RequestLogger(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.EqualFold(r.URL.Path, "/login") {
+		if r.Method == http.MethodPost && strings.EqualFold(r.URL.Path, "/sessions") {
 			router.ServeHTTP(w, r)
 			return
 		}
@@ -477,6 +477,9 @@ func newCredentialStoreAdapter(repo persistence.UserRepository) *credentialStore
 func (a *credentialStoreAdapter) GetUserCredentialsByEmail(ctx context.Context, email string) (application.UserCredentials, error) {
 	stored, err := a.repo.GetUserByEmail(ctx, email)
 	if err != nil {
+		if errors.Is(err, persistence.ErrNotFound) {
+			return application.UserCredentials{}, application.ErrNotFound
+		}
 		return application.UserCredentials{}, err
 	}
 	return application.UserCredentials{

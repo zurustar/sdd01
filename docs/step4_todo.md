@@ -3,9 +3,15 @@
 複数チームが並行して進められるよう、優先順位と依存関係の薄い作業単位で整理した。各グループは完了後にチェックを更新し、横断的な連携事項はメモ欄に追記していく。
 
 ## グループA: 認証・セッション基盤
-- [ ] Argon2id を用いたパスワード検証と資格情報取得フローを `internal/application.AuthService` とリポジトリに実装し、`POST /sessions` の成功・失敗レスポンス規約を満たす。【F:docs/authentication_authorization.md†L3-L36】【F:docs/enterprise_scheduler_spec.md†L47-L55】
-- [ ] セッションリポジトリと `internal/http` のミドルウェアを接続し、期限切れ・無効トークン時に 401 を返す監査ログ付きの検証パスを整備する。【F:docs/authentication_authorization.md†L14-L41】【F:docs/step4_handoff.md†L11-L12】
-- [ ] ログアウト（トークン失効）と管理者向け失効 API を公開し、トークン漏洩リスクへの対策を強化する。【F:docs/authentication_authorization.md†L30-L36】【F:docs/step4_handoff.md†L11-L13】
+- [v] Argon2id を用いたパスワード検証と資格情報取得フローを `internal/application.AuthService` とリポジトリに実装し、`POST /sessions` の成功・失敗レスポンス規約を満たす。【F:docs/authentication_authorization.md†L3-L36】【F:docs/enterprise_scheduler_spec.md†L47-L55】
+  - [v] `POST /sessions` ハンドラーとルーターを仕様に合わせて再設計し、成功時 201 / 失敗時 401 を返すよう更新する。
+  - [v] 資格情報取得アダプターと `AuthService` の Argon2id 検証を統合し、既存テストを補強する。
+- [v] セッションリポジトリと `internal/http` のミドルウェアを接続し、期限切れ・無効トークン時に 401 を返す監査ログ付きの検証パスを整備する。【F:docs/authentication_authorization.md†L14-L41】【F:docs/step4_handoff.md†L11-L12】
+  - [v] セッション検証ミドルウェアのエラーレスポンスを仕様の `error_code` / メッセージに合わせ、監査ログを調整する。
+  - [v] ルーター初期化時に保護対象パスを整理し、ログイン API だけが匿名アクセス可能になるよう修正する。
+- [v] ログアウト（トークン失効）と管理者向け失効 API を公開し、トークン漏洩リスクへの対策を強化する。【F:docs/authentication_authorization.md†L30-L36】【F:docs/step4_handoff.md†L11-L13】
+  - [v] `DELETE /sessions/current` エンドポイントを追加し、クッキーおよびヘッダーからトークンを削除する。
+  - [v] セッション失効を委譲するサービスメソッドとエラー時レスポンスのテストを追加する。
 
 ## グループB: 永続化・マイグレーション
 - [ ] (作業メモ) 既存の `internal/persistence` レイヤー構成と `database_schema.md` を精査し、リポジトリごとの永続化責務と期待されるクエリ境界を整理する。

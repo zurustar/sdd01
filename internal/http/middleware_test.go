@@ -47,7 +47,10 @@ func TestSessionMiddleware(t *testing.T) {
 		if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
 			t.Fatalf("failed to decode error response: %v", err)
 		}
-		if payload.Message != "セッショントークンが指定されていません。" {
+		if payload.ErrorCode != "AUTH_SESSION_EXPIRED" {
+			t.Fatalf("expected error code AUTH_SESSION_EXPIRED, got %q", payload.ErrorCode)
+		}
+		if payload.Message != "認証トークンを指定してください" {
 			t.Fatalf("unexpected error message: %q", payload.Message)
 		}
 
@@ -128,37 +131,43 @@ func TestSessionMiddleware(t *testing.T) {
 			name           string
 			err            error
 			expectedStatus int
+			expectedCode   string
 			expectedBody   string
 		}{
 			{
 				name:           "unauthorized",
 				err:            application.ErrUnauthorized,
 				expectedStatus: http.StatusUnauthorized,
-				expectedBody:   "セッションが無効です。再度ログインしてください。",
+				expectedCode:   "AUTH_SESSION_EXPIRED",
+				expectedBody:   "セッションの有効期限が切れています",
 			},
 			{
 				name:           "not found",
 				err:            application.ErrNotFound,
 				expectedStatus: http.StatusUnauthorized,
-				expectedBody:   "セッションが見つかりません。再度ログインしてください。",
+				expectedCode:   "AUTH_SESSION_EXPIRED",
+				expectedBody:   "セッションの有効期限が切れています",
 			},
 			{
 				name:           "expired",
 				err:            application.ErrSessionExpired,
 				expectedStatus: http.StatusUnauthorized,
-				expectedBody:   "セッションの有効期限が切れています。再度ログインしてください。",
+				expectedCode:   "AUTH_SESSION_EXPIRED",
+				expectedBody:   "セッションの有効期限が切れています",
 			},
 			{
 				name:           "revoked",
 				err:            application.ErrSessionRevoked,
 				expectedStatus: http.StatusUnauthorized,
-				expectedBody:   "セッションが取り消されました。再度ログインしてください。",
+				expectedCode:   "AUTH_SESSION_EXPIRED",
+				expectedBody:   "セッションの有効期限が切れています",
 			},
 			{
 				name:           "unexpected",
 				err:            errors.New("boom"),
 				expectedStatus: http.StatusInternalServerError,
-				expectedBody:   "セッション検証中にエラーが発生しました。",
+				expectedCode:   "INTERNAL_ERROR",
+				expectedBody:   "セッション検証中にエラーが発生しました",
 			},
 		}
 
@@ -196,6 +205,9 @@ func TestSessionMiddleware(t *testing.T) {
 				var payload errorResponse
 				if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
 					t.Fatalf("failed to decode response: %v", err)
+				}
+				if payload.ErrorCode != tc.expectedCode {
+					t.Fatalf("unexpected error code: %q", payload.ErrorCode)
 				}
 				if payload.Message != tc.expectedBody {
 					t.Fatalf("unexpected error message: %q", payload.Message)

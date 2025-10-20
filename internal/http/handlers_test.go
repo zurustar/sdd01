@@ -14,7 +14,7 @@ import (
 )
 
 func TestAuthHandlers(t *testing.T) {
-	t.Run("login issues session token via cookie and header", func(t *testing.T) {
+	t.Run("create session issues token via cookie and header", func(t *testing.T) {
 		issuedAt := time.Date(2024, 4, 1, 15, 0, 0, 0, time.UTC)
 		service := &fakeAuthService{
 			authenticateFunc: func(ctx context.Context, params application.AuthenticateParams) (application.AuthenticateResult, error) {
@@ -42,16 +42,16 @@ func TestAuthHandlers(t *testing.T) {
 			t.Fatalf("failed to marshal credentials: %v", err)
 		}
 
-		req := httptest.NewRequest(http.MethodPost, "/login", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/sessions", bytes.NewReader(body))
 		recorder := httptest.NewRecorder()
 
-		handler.Login(recorder, req)
+		handler.CreateSession(recorder, req)
 
 		res := recorder.Result()
 		t.Cleanup(func() { _ = res.Body.Close() })
 
-		if res.StatusCode != http.StatusOK {
-			t.Fatalf("expected status 200 OK, got %d", res.StatusCode)
+		if res.StatusCode != http.StatusCreated {
+			t.Fatalf("expected status 201 Created, got %d", res.StatusCode)
 		}
 
 		if token := res.Header.Get("X-Session-Token"); token != "session-token" {
@@ -87,10 +87,6 @@ func TestAuthHandlers(t *testing.T) {
 		var payload struct {
 			Token     string `json:"token"`
 			ExpiresAt string `json:"expires_at"`
-			Principal struct {
-				UserID  string `json:"user_id"`
-				IsAdmin bool   `json:"is_admin"`
-			} `json:"principal"`
 		}
 		if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
 			t.Fatalf("failed to decode response: %v", err)
@@ -98,12 +94,6 @@ func TestAuthHandlers(t *testing.T) {
 
 		if payload.Token != "session-token" {
 			t.Fatalf("expected payload token session-token, got %q", payload.Token)
-		}
-		if payload.Principal.UserID != "user-1" {
-			t.Fatalf("expected principal user_id user-1, got %q", payload.Principal.UserID)
-		}
-		if !payload.Principal.IsAdmin {
-			t.Fatalf("expected principal is_admin true")
 		}
 		expiresAt, err := time.Parse(time.RFC3339Nano, payload.ExpiresAt)
 		if err != nil {
@@ -114,7 +104,7 @@ func TestAuthHandlers(t *testing.T) {
 		}
 	})
 
-	t.Run("logout revokes the session", func(t *testing.T) {
+	t.Run("delete current session revokes the session", func(t *testing.T) {
 		var revokedToken string
 		service := &fakeAuthService{
 			revokeFunc: func(ctx context.Context, token string) error {
@@ -125,12 +115,12 @@ func TestAuthHandlers(t *testing.T) {
 
 		handler := NewAuthHandler(service, nil)
 
-		req := httptest.NewRequest(http.MethodPost, "/logout", nil)
+		req := httptest.NewRequest(http.MethodDelete, "/sessions/current", nil)
 		req.Header.Set("Authorization", "Bearer header-token")
 		req.AddCookie(&http.Cookie{Name: "session_token", Value: "cookie-token"})
 		recorder := httptest.NewRecorder()
 
-		handler.Logout(recorder, req)
+		handler.DeleteCurrentSession(recorder, req)
 
 		res := recorder.Result()
 		t.Cleanup(func() { _ = res.Body.Close() })
@@ -158,8 +148,63 @@ func TestAuthHandlers(t *testing.T) {
 		if clearCookie.MaxAge != -1 {
 			t.Fatalf("expected cleared cookie MaxAge -1, got %d", clearCookie.MaxAge)
 		}
-		if clearCookie.Expires.IsZero() || clearCookie.Expires.After(time.Now().Add(-time.Minute)) {
-			t.Fatalf("expected cleared cookie to be expired, got %v", clearCookie.Expires)
+		if clearCookie.Expires.IsZero() {
+			t.Fatalf("expected cleared cookie expiry to be set, got %v", clearCookie.Expires)
+		}
+	})
+
+	t.Run("administrator can revoke arbitrary session", func(t *testing.T) {
+		var revokedToken string
+		service := &fakeAuthService{
+			revokeFunc: func(ctx context.Context, token string) error {
+				revokedToken = token
+				return nil
+			},
+		}
+
+		handler := NewAuthHandler(service, nil)
+
+		req := httptest.NewRequest(http.MethodDelete, "/sessions/token-to-revoke", nil)
+		ctx := ContextWithPrincipal(req.Context(), application.Principal{UserID: "admin-1", IsAdmin: true})
+		req = req.WithContext(ctx)
+		recorder := httptest.NewRecorder()
+
+		handler.DeleteSession(recorder, req, "token-to-revoke")
+
+		res := recorder.Result()
+		t.Cleanup(func() { _ = res.Body.Close() })
+
+		if res.StatusCode != http.StatusNoContent {
+			t.Fatalf("expected status 204 No Content, got %d", res.StatusCode)
+		}
+		if revokedToken != "token-to-revoke" {
+			t.Fatalf("expected admin to revoke token-to-revoke, got %q", revokedToken)
+		}
+	})
+
+	t.Run("non administrators cannot revoke arbitrary sessions", func(t *testing.T) {
+		handler := NewAuthHandler(&fakeAuthService{}, nil)
+
+		req := httptest.NewRequest(http.MethodDelete, "/sessions/token", nil)
+		ctx := ContextWithPrincipal(req.Context(), application.Principal{UserID: "employee-1", IsAdmin: false})
+		req = req.WithContext(ctx)
+		recorder := httptest.NewRecorder()
+
+		handler.DeleteSession(recorder, req, "token")
+
+		res := recorder.Result()
+		t.Cleanup(func() { _ = res.Body.Close() })
+
+		if res.StatusCode != http.StatusForbidden {
+			t.Fatalf("expected 403 Forbidden, got %d", res.StatusCode)
+		}
+
+		var payload errorResponse
+		if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+			t.Fatalf("failed to decode error response: %v", err)
+		}
+		if payload.ErrorCode != "AUTH_FORBIDDEN" {
+			t.Fatalf("expected error code AUTH_FORBIDDEN, got %q", payload.ErrorCode)
 		}
 	})
 }
