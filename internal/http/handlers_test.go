@@ -844,7 +844,7 @@ func TestRoomHandlers(t *testing.T) {
 		if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
 			t.Fatalf("failed to decode error response: %v", err)
 		}
-		if payload.Message != "セッショントークンが指定されていません。" {
+		if payload.Message != "認証トークンを指定してください" {
 			t.Fatalf("unexpected error message: %q", payload.Message)
 		}
 	})
