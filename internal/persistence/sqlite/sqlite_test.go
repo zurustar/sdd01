@@ -600,3 +600,179 @@ func TestSchemaIncludesSessionsTable(t *testing.T) {
 		t.Fatalf("schema.sql missing sessions user index")
 	}
 }
+
+// TestStorageMigrate_IntegrationWithMigrationSystem tests the integration of Storage.Migrate with the new migration system
+func TestStorageMigrate_IntegrationWithMigrationSystem(t *testing.T) {
+	ctx := context.Background()
+	
+	// Create a temporary directory for the test database
+	dir := t.TempDir()
+	dsn := filepath.Join(dir, "test_migration.db")
+	
+	// Open storage without calling Migrate yet
+	storage, err := Open(dsn)
+	if err != nil {
+		t.Fatalf("failed to open storage: %v", err)
+	}
+	defer storage.Close()
+	
+	// Test that migration runs successfully
+	if err := storage.Migrate(ctx); err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
+	
+	// Verify that the database was created and has the expected schema
+	// by attempting to create a user (which requires the users table to exist)
+	now := time.Now().UTC().Truncate(time.Second)
+	user := persistence.User{
+		ID:           "test-user",
+		Email:        "test@example.com",
+		DisplayName:  "Test User",
+		PasswordHash: "hash",
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	
+	if err := storage.CreateUser(ctx, user); err != nil {
+		t.Fatalf("failed to create user after migration: %v", err)
+	}
+	
+	// Verify user was created successfully
+	fetched, err := storage.GetUser(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("failed to fetch user after migration: %v", err)
+	}
+	
+	if fetched.Email != user.Email {
+		t.Fatalf("user data mismatch after migration: expected %s, got %s", user.Email, fetched.Email)
+	}
+}
+
+// TestStorageMigrate_IdempotentExecution tests that running migrations multiple times is safe
+func TestStorageMigrate_IdempotentExecution(t *testing.T) {
+	ctx := context.Background()
+	
+	// Create a temporary directory for the test database
+	dir := t.TempDir()
+	dsn := filepath.Join(dir, "test_idempotent.db")
+	
+	// Open storage and run migration first time
+	storage, err := Open(dsn)
+	if err != nil {
+		t.Fatalf("failed to open storage: %v", err)
+	}
+	defer storage.Close()
+	
+	// First migration
+	if err := storage.Migrate(ctx); err != nil {
+		t.Fatalf("first migration failed: %v", err)
+	}
+	
+	// Create test data to ensure it persists (using the Storage interface)
+	now := time.Now().UTC().Truncate(time.Second)
+	user := persistence.User{
+		ID:           "persistent-user",
+		Email:        "persistent@example.com",
+		DisplayName:  "Persistent User",
+		PasswordHash: "hash",
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	
+	if err := storage.CreateUser(ctx, user); err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
+	
+	// Second migration (should be idempotent - no new migrations should be applied)
+	if err := storage.Migrate(ctx); err != nil {
+		t.Fatalf("second migration failed: %v", err)
+	}
+	
+	// Verify data still exists (this tests that the migration didn't break anything)
+	fetched, err := storage.GetUser(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("failed to fetch user after second migration: %v", err)
+	}
+	
+	if fetched.Email != user.Email {
+		t.Fatalf("user data lost after second migration: expected %s, got %s", user.Email, fetched.Email)
+	}
+	
+	// Third migration (should still be safe)
+	if err := storage.Migrate(ctx); err != nil {
+		t.Fatalf("third migration failed: %v", err)
+	}
+	
+	// Verify data still exists after third migration
+	fetched, err = storage.GetUser(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("failed to fetch user after third migration: %v", err)
+	}
+	
+	if fetched.Email != user.Email {
+		t.Fatalf("user data lost after third migration: expected %s, got %s", user.Email, fetched.Email)
+	}
+}
+
+// TestStorageMigrate_WithMissingMigrationDirectory tests behavior when migration directory doesn't exist
+func TestStorageMigrate_WithMissingMigrationDirectory(t *testing.T) {
+	ctx := context.Background()
+	
+	// Create a temporary directory for the test database
+	dir := t.TempDir()
+	dsn := filepath.Join(dir, "test_missing_dir.db")
+	
+	// Create a custom storage that will look for migrations in a non-existent location
+	// We'll temporarily rename the migrations directory to simulate it being missing
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller returned false")
+	}
+	packageDir := filepath.Dir(filename)
+	migrationsDir := filepath.Join(packageDir, "migrations")
+	tempDir := filepath.Join(packageDir, "migrations_backup")
+	
+	// Rename migrations directory temporarily
+	if err := os.Rename(migrationsDir, tempDir); err != nil {
+		t.Fatalf("failed to rename migrations directory: %v", err)
+	}
+	defer func() {
+		// Restore migrations directory
+		os.Rename(tempDir, migrationsDir)
+	}()
+	
+	// Open storage
+	storage, err := Open(dsn)
+	if err != nil {
+		t.Fatalf("failed to open storage: %v", err)
+	}
+	defer storage.Close()
+	
+	// Migration should fail due to missing directory
+	if err := storage.Migrate(ctx); err == nil {
+		t.Fatalf("expected migration to fail with missing directory, but it succeeded")
+	} else if !strings.Contains(err.Error(), "migration directory does not exist") && 
+	          !strings.Contains(err.Error(), "no such file or directory") {
+		t.Fatalf("expected directory-related error, got: %v", err)
+	}
+}
+
+// TestStorageMigrate_DatabaseConnectionFailure tests behavior when database connection fails
+func TestStorageMigrate_DatabaseConnectionFailure(t *testing.T) {
+	ctx := context.Background()
+	
+	// Try to open storage with an invalid path that should cause connection issues
+	invalidPath := "/invalid/path/that/should/not/exist/test.db"
+	
+	storage, err := Open(invalidPath)
+	if err != nil {
+		// This is expected - the path is invalid
+		return
+	}
+	defer storage.Close()
+	
+	// If Open succeeded (shouldn't happen), migration should fail
+	if err := storage.Migrate(ctx); err == nil {
+		t.Fatalf("expected migration to fail with invalid database path, but it succeeded")
+	}
+}

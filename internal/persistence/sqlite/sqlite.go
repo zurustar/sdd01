@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/example/enterprise-scheduler/internal/persistence"
+	"github.com/example/enterprise-scheduler/internal/persistence/sqlite/migration"
 	_ "modernc.org/sqlite"
 )
 
@@ -79,9 +81,10 @@ func (s *Storage) Close() error {
 	return nil
 }
 
-// Migrate applies the embedded schema using the stub database/sql driver so
-// that migration plumbing can be exercised without CGO.
+// Migrate applies database migrations using the migration system instead of embedded schema.
+// This replaces the previous embedded schema approach with a file-based migration system.
 func (s *Storage) Migrate(ctx context.Context) error {
+	// Open database connection for migrations
 	db, err := sql.Open("sqlite", fmt.Sprintf("file:%s", s.path))
 	if err != nil {
 		return fmt.Errorf("sqlite: open migration connection: %w", err)
@@ -90,9 +93,32 @@ func (s *Storage) Migrate(ctx context.Context) error {
 		_ = db.Close()
 	}()
 
-	if err := runStatements(ctx, db, schemaSQL); err != nil {
-		return err
+	// Configure SQLite connection with appropriate settings
+	sqliteConfig := migration.DefaultSQLiteConfig(s.path)
+	connectionManager := migration.NewConnectionManager(sqliteConfig)
+	if err := connectionManager.ConfigureDatabase(db); err != nil {
+		return fmt.Errorf("sqlite: configure migration database: %w", err)
 	}
+
+	// Set up migration system components
+	// Get the absolute path to the migrations directory relative to this package
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		return fmt.Errorf("sqlite: failed to determine package location")
+	}
+	packageDir := filepath.Dir(filename)
+	migrationDir := filepath.Join(packageDir, "migrations")
+	
+	// Create migration components
+	scanner := migration.NewFileScanner()
+	executor := migration.NewSQLiteExecutor(db)
+	migrationManager := migration.NewMigrationManager(scanner, executor, migrationDir)
+
+	// Execute migrations
+	if err := migrationManager.RunMigrations(ctx); err != nil {
+		return fmt.Errorf("sqlite: migration execution failed: %w", err)
+	}
+
 	return nil
 }
 
