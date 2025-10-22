@@ -15,9 +15,9 @@
 4. SQLite 整合性エラー時はリードオンリーに切り替え、バックアップから復旧準備。
 
 ## バックアップ / リストア
-- バックアップ: 毎日 02:00 JST に `sqlite3 scheduler.db ".backup backup/scheduler-$(date).db"`。
-- リストア: サービス停止 → バックアップファイルを配置 → マイグレーションバージョン確認 → サービス再起動。
-- 復旧後は `GET /healthz` と簡易スモークテストを実施。
+- バックアップ: 毎日 02:00 JST に `scripts/backup.sh -d /var/lib/scheduler/scheduler.db -o /var/backups/scheduler` を実行。`-k` で保持世代数（既定 7）を調整する。
+- リストア: サービス停止 → `scripts/restore.sh -d /var/lib/scheduler/scheduler.db -i /var/backups/scheduler/scheduler.db.<timestamp>.sqlite3.gz` → `cmd/scheduler` を再起動し、起動時マイグレーションログを確認。
+- 復旧後は `GET /healthz` と簡易スモークテストを実施し、最新バックアップの取得時刻を記録する。
 
 ## 連絡フロー
 | 事象 | 連絡先 | SLA |

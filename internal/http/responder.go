@@ -60,23 +60,30 @@ func (r responder) writeError(ctx context.Context, w http.ResponseWriter, status
 }
 
 func (r responder) handleServiceError(ctx context.Context, w http.ResponseWriter, err error) {
+	logger := r.loggerFor(ctx)
 	if err == nil {
+		logger.ErrorContext(ctx, "unknown service error", "error", err)
 		r.writeError(ctx, w, http.StatusInternalServerError, errors.New("unknown error"))
 		return
 	}
 
+	logDetails := []any{"error", err, "error_code", errorCode(err)}
+
 	switch {
 	case errors.Is(err, application.ErrUnauthorized):
+		logger.WarnContext(ctx, "unauthorized access", logDetails...)
 		r.writeJSON(ctx, w, http.StatusForbidden, errorResponse{
 			ErrorCode: "AUTH_FORBIDDEN",
 			Message:   "この操作を実行する権限がありません。",
 		})
 	case errors.Is(err, application.ErrNotFound):
+		logger.WarnContext(ctx, "resource not found", logDetails...)
 		r.writeJSON(ctx, w, http.StatusNotFound, errorResponse{
 			ErrorCode: "RESOURCE_NOT_FOUND",
 			Message:   "指定されたリソースが見つかりません。",
 		})
 	case errors.Is(err, application.ErrAlreadyExists):
+		logger.InfoContext(ctx, "resource conflict", logDetails...)
 		r.writeJSON(ctx, w, http.StatusConflict, errorResponse{
 			ErrorCode: "RESOURCE_CONFLICT",
 			Message:   "指定されたリソースは既に存在します。",
@@ -84,6 +91,7 @@ func (r responder) handleServiceError(ctx context.Context, w http.ResponseWriter
 	default:
 		var vErr *application.ValidationError
 		if errors.As(err, &vErr) {
+			logger.InfoContext(ctx, "validation failed", logDetails...)
 			details := localizeValidationErrors(vErr)
 			r.writeJSON(ctx, w, http.StatusUnprocessableEntity, errorResponse{
 				ErrorCode: "VALIDATION_FAILED",
@@ -93,6 +101,7 @@ func (r responder) handleServiceError(ctx context.Context, w http.ResponseWriter
 			return
 		}
 
+		logger.ErrorContext(ctx, "internal server error", logDetails...)
 		r.writeJSON(ctx, w, http.StatusInternalServerError, errorResponse{
 			ErrorCode: "INTERNAL_SERVER_ERROR",
 			Message:   "サーバー内部でエラーが発生しました。",
@@ -184,4 +193,30 @@ type errorResponse struct {
 	ErrorCode string            `json:"error_code,omitempty"`
 	Message   string            `json:"message"`
 	Errors    map[string]string `json:"errors,omitempty"`
+}
+
+func errorCode(err error) string {
+	if err == nil {
+		return ""
+	}
+	switch {
+	case errors.Is(err, application.ErrUnauthorized):
+		return "AUTH_FORBIDDEN"
+	case errors.Is(err, application.ErrNotFound):
+		return "RESOURCE_NOT_FOUND"
+	case errors.Is(err, application.ErrAlreadyExists):
+		return "RESOURCE_CONFLICT"
+	case errors.Is(err, application.ErrInvalidCredentials):
+		return "AUTH_INVALID_CREDENTIALS"
+	case errors.Is(err, application.ErrSessionExpired):
+		return "AUTH_SESSION_EXPIRED"
+	case errors.Is(err, application.ErrSessionRevoked):
+		return "AUTH_SESSION_REVOKED"
+	default:
+		var vErr *application.ValidationError
+		if errors.As(err, &vErr) {
+			return "VALIDATION_FAILED"
+		}
+		return "INTERNAL_SERVER_ERROR"
+	}
 }

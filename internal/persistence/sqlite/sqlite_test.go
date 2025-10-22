@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -583,21 +584,61 @@ func TestSchemaIncludesSessionsTable(t *testing.T) {
 		t.Fatal("runtime.Caller returned false")
 	}
 
-	path := filepath.Join(filepath.Dir(filename), "schema.sql")
+	path := filepath.Join(filepath.Dir(filename), "migrations", "0001_init.up.sql")
 	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("failed to read schema.sql: %v", err)
+		t.Fatalf("failed to read migration: %v", err)
 	}
 
 	contents := string(data)
 	if !strings.Contains(contents, "CREATE TABLE IF NOT EXISTS sessions") {
-		t.Fatalf("schema.sql missing sessions table definition")
+		t.Fatalf("migration missing sessions table definition")
 	}
-	if !strings.Contains(contents, "idx_sessions_expires_at") {
-		t.Fatalf("schema.sql missing sessions expiry index")
+	if !strings.Contains(contents, "idx_sessions_expires") {
+		t.Fatalf("migration missing sessions expiry index")
 	}
-	if !strings.Contains(contents, "idx_sessions_user_id") {
-		t.Fatalf("schema.sql missing sessions user index")
+	if !strings.Contains(contents, "idx_sessions_user") {
+		t.Fatalf("migration missing sessions user index")
+	}
+}
+
+func TestMigrateCreatesStateFile(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	dsn := filepath.Join(dir, "scheduler.db")
+	storage, err := Open(dsn)
+	if err != nil {
+		t.Fatalf("failed to open storage: %v", err)
+	}
+	defer func() {
+		_ = storage.Close()
+	}()
+
+	statePath := storage.migrationStatePath()
+	if _, err := os.Stat(statePath); err == nil {
+		t.Fatalf("expected no migration state file before migrate")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unexpected stat error: %v", err)
+	}
+
+	if err := storage.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate failed: %v", err)
+	}
+
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("failed to read migration state: %v", err)
+	}
+	if len(data) == 0 {
+		t.Fatalf("migration state file is empty")
+	}
+
+	var state map[string]string
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Fatalf("failed to decode state: %v", err)
+	}
+	if _, ok := state["0001"]; !ok {
+		t.Fatalf("expected migration 0001 to be recorded, got %#v", state)
 	}
 }
 
