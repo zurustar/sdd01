@@ -76,9 +76,9 @@
 - [v] UX ドキュメントとエラーメッセージのローカライズガイドラインを整備し、API との整合を図る。【F:docs/authentication_authorization.md†L30-L36】【F:docs/user_quickstart.md†L1-L80】
 
 ## グループE: DevOps・CI
-- [ ] GitHub Actions で lint / unit / race / coverage を実行するワークフローを追加し、Step4 開始時の CI 空白を解消する。【F:docs/documentation_plan.md†L40-L46】【F:docs/step4_handoff.md†L3-L6】
-- [ ] `golangci-lint` 設定ファイルとカバレッジ閾値チェックを導入し、テスト戦略のカバレッジ基準を自動化する。【F:docs/test_strategy.md†L15-L76】【F:docs/documentation_plan.md†L42-L44】
-- [ ] `CGO_ENABLED=0 go test ./...` を含むビルドパイプラインを構築し、SQLite ドライバ依存の回帰を防ぐ。【F:docs/documentation_plan.md†L40-L46】【F:docs/step4_handoff.md†L3-L13】
+- [v] GitHub Actions で lint / unit / race / coverage を実行するワークフローを追加し、Step4 開始時の CI 空白を解消する。【F:docs/documentation_plan.md†L40-L46】【F:docs/step4_handoff.md†L3-L6】
+- [v] `golangci-lint` 設定ファイルとカバレッジ閾値チェックを導入し、テスト戦略のカバレッジ基準を自動化する。【F:docs/test_strategy.md†L15-L76】【F:docs/documentation_plan.md†L42-L44】
+- [v] `CGO_ENABLED=0 go test ./...` を含むビルドパイプラインを構築し、SQLite ドライバ依存の回帰を防ぐ。【F:docs/documentation_plan.md†L40-L46】【F:docs/step4_handoff.md†L3-L13】
 
 ## グループF: クロスカッティング / オペレーション
 - [ ] サービスロギングと監査出力ポリシーを `log/slog` へ実装し、エラー種別とリクエスト ID を標準化する。【F:docs/logging_audit_policy.md†L1-L88】
