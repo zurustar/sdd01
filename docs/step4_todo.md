@@ -81,9 +81,9 @@
 - [v] `CGO_ENABLED=0 go test ./...` を含むビルドパイプラインを構築し、SQLite ドライバ依存の回帰を防ぐ。【F:docs/documentation_plan.md†L40-L46】【F:docs/step4_handoff.md†L3-L13】
 
 ## グループF: クロスカッティング / オペレーション
-- [ ] サービスロギングと監査出力ポリシーを `log/slog` へ実装し、エラー種別とリクエスト ID を標準化する。【F:docs/logging_audit_policy.md†L1-L88】
+- [v] サービスロギングと監査出力ポリシーを `log/slog` へ実装し、エラー種別とリクエスト ID を標準化する。【F:docs/logging_audit_policy.md†L1-L88】
   - [v] `internal/http/middleware.go` の `RequestLogger` を修正し、`X-Request-ID` ヘッダーに対応し、なければUUIDを生成する。
   - [v] 認証済みリクエストのログに `user_id` を含める。
   - [v] `docs/logging_audit_policy.md` に従って、センチネルエラーに基づいたログレベルを設定する。
-- [ ] 運用ランブックに沿ってヘルスチェック、アラート、バックアップ検証の自動化スクリプトを用意する。【F:docs/operations_runbook.md†L1-L120】【F:docs/step4_handoff.md†L11-L13】
-- [ ] ドキュメント群（API リファレンス、テスト実行ガイド等）の更新を自動検証し、仕様とのトレーサビリティを維持する。【F:docs/traceability_matrix.md†L1-L120】【F:docs/documentation_plan.md†L6-L24】
+- [v] 運用ランブックに沿ってヘルスチェック、アラート、バックアップ検証の自動化スクリプトを用意する。【F:docs/operations_runbook.md†L1-L120】【F:docs/step4_handoff.md†L11-L13】
+- [v] ドキュメント群（API リファレンス、テスト実行ガイド等）の更新を自動検証し、仕様とのトレーサビリティを維持する。【F:docs/traceability_matrix.md†L1-L120】【F:docs/documentation_plan.md†L6-L24】
