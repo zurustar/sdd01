@@ -14,7 +14,7 @@
   - [v] セッション失効を委譲するサービスメソッドとエラー時レスポンスのテストを追加する。
 
 ## グループB: 永続化・マイグレーション
-- [ ] (作業メモ) 既存の `internal/persistence` レイヤー構成と `database_schema.md` を精査し、リポジトリごとの永続化責務と期待されるクエリ境界を整理する。
+- [v] (作業メモ) 既存の `internal/persistence` レイヤー構成と `database_schema.md` を精査し、リポジトリごとの永続化責務と期待されるクエリ境界を整理する。
   - [v] `internal/persistence` 配下の現状を調査し、主要コンポーネントと責務をメモ化する。
     - `errors.go` で永続化層共通のエラー表現を定義。`models.go` でドメインモデルを永続化向け構造体に正規化し、`repositories.go` がアプリケーション層と接続するインターフェース（ユーザー・会議室・スケジュール・繰り返し・セッション）を提供している。
     - `sqlite` 実装では `Storage` が各インターフェースを満たし、ユーザー／会議室／スケジュールなどの CRUD を一貫して提供。マップとミューテックスで整合性を確保し、`normalize*` ヘルパーやユニーク制約検証を内包している。
@@ -30,24 +30,24 @@
   - [v] マイグレーション適用シーケンス案を文書化する。
     - `internal/persistence/sqlite/migrations` に `<version>_<name>.up.sql/.down.sql` を配置し、`schema_migrations` をトランザクション内で管理。未適用バージョンのみ `BEGIN ... COMMIT` で順次適用する。
     - `cmd/scheduler` 起動時に 3 段階で実行: (1) DB 接続確立、(2) `Migrate` で up 適用、(3) 失敗時はリトライ（指数バックオフ最大 3 回）後にフェイル。ログは `logger.Info("sqlite migrate start", ...)` / `logger.Info("sqlite migrate done", ...)` で標準化する。
-- [ ] (作業メモ) バックアップ・復旧スクリプトの配置場所と CLI 仕様、運用ドキュメント更新内容をまとめる。
+- [v] (作業メモ) バックアップ・復旧スクリプトの配置場所と CLI 仕様、運用ドキュメント更新内容をまとめる。
   - [v] バックアップ／復旧 CLI 方針をメモに書き出す。
     - `scripts/backup.sh` で `sqlite3 "$DB" ".backup $DEST"` を実行し、圧縮（`gzip`）と世代管理（保持 7 世代）を追加する。リストアは `scripts/restore.sh` で停止後に `.restore` を使う。
     - CLI では `cmd/scheduler-admin backup --output <path>` `restore --input <path>` を用意し、内部的に上記スクリプトを呼び出す構成を検討する。
   - [v] 運用ドキュメント更新案を整理する。
     - `docs/operations_runbook.md` にバックアップ取得／復旧手順、検証コマンド、失敗時のロールバック手順を追記。`docs/database_schema.md` にはスキーマ変更時にバックアップを取得するベストプラクティスを明記する。
-- [ ] `internal/persistence/sqlite` に接続プールと共通トランザクションヘルパーを実装し、`database/sql` エラーマッピングとログ出力方針を決める。【F:docs/database_schema.md†L3-L32】【F:docs/architecture_overview.md†L31-L52】
-  - [ ] SQLite コネクションマネージャとトランザクションヘルパーを実装する。
-  - [ ] エラーマッピングとログ方針を決定しコード化する。
-- [ ] ユーザー / 会議室リポジトリを SQLite 実装で提供し、ユニーク制約・外部キーを SQL レベルで検証する。【F:docs/database_schema.md†L33-L52】【F:docs/architecture_overview.md†L31-L52】
-  - [ ] ユーザーリポジトリの SQLite 実装とテストを追加する。
-  - [ ] 会議室リポジトリの SQLite 実装とテストを追加する。
-- [ ] スケジュール・参加者・会議室割当を管理するリポジトリを実装し、結合クエリと `ScheduleFilter` の範囲指定をカバーする。【F:docs/database_schema.md†L53-L78】【F:docs/scheduling_workflows.md†L3-L32】
-  - [ ] スケジュール／参加者／割当リポジトリを実装し、フィルタリングロジックを追加する。
-  - [ ] 結合クエリのテストを作成する。
-- [ ] 繰り返しルールとセッションリポジトリを実装し、TTL クリーンアップや作成・失効 API を支える SQL を整備する。【F:docs/database_schema.md†L33-L78】【F:docs/authentication_authorization.md†L14-L36】
-  - [ ] 繰り返しルールリポジトリとセッションリポジトリを実装する。
-  - [ ] TTL クリーンアップと失効 API 用 SQL を作成しテストする。
+- [v] `internal/persistence/sqlite` に接続プールと共通トランザクションヘルパーを実装し、`database/sql` エラーマッピングとログ出力方針を決める。【F:docs/database_schema.md†L3-L32】【F:docs/architecture_overview.md†L31-L52】
+  - [v] SQLite コネクションマネージャとトランザクションヘルパーを実装する。
+  - [v] エラーマッピングとログ方針を決定しコード化する。
+- [v] ユーザー / 会議室リポジトリを SQLite 実装で提供し、ユニーク制約・外部キーを SQL レベルで検証する。【F:docs/database_schema.md†L33-L52】【F:docs/architecture_overview.md†L31-L52】
+  - [v] ユーザーリポジトリの SQLite 実装とテストを追加する。
+  - [v] 会議室リポジトリの SQLite 実装とテストを追加する。
+- [v] スケジュール・参加者・会議室割当を管理するリポジトリを実装し、結合クエリと `ScheduleFilter` の範囲指定をカバーする。【F:docs/database_schema.md†L53-L78】【F:docs/scheduling_workflows.md†L3-L32】
+  - [v] スケジュール／参加者／割当リポジトリを実装し、フィルタリングロジックを追加する。
+  - [v] 結合クエリのテストを作成する。
+- [v] 繰り返しルールとセッションリポジトリを実装し、TTL クリーンアップや作成・失効 API を支える SQL を整備する。【F:docs/database_schema.md†L33-L78】【F:docs/authentication_authorization.md†L14-L36】
+  - [v] 繰り返しルールリポジトリとセッションリポジトリを実装する。
+  - [v] TTL クリーンアップと失効 API 用 SQL を作成しテストする。
 - [v] 初期スキーマを up/down マイグレーションスクリプトへ分解し、外部キー検証と索引付けを追加する。【F:docs/database_schema.md†L80-L95】
   - [v] 初期マイグレーションスクリプトを作成し、外部キーとインデックスを定義する。
 - [v] マイグレーション runner を `cmd/scheduler` 起動シーケンスへ組み込み、起動ログとリトライポリシーを決める。【F:docs/database_schema.md†L80-L95】【F:docs/step4_handoff.md†L3-L7】
