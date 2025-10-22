@@ -38,7 +38,7 @@
     - Query applied migrations to determine pending migrations
     - _Requirements: 2.1, 2.2, 2.3_
 
-  - [x] 3.3 Write unit tests feor migration executor
+  - [x] 3.3 Write unit tests for migration executor
     - Test successful migration execution and version recording
     - Test transaction rollback on SQL errors
     - Test schema_migrations table creation and updates
@@ -152,20 +152,20 @@
       - Test foreign key constraints and indexes
       - _Requirements: 1.1, 1.2, 1.3, 1.4_
 
-- [ ] 8. Update application startup integration
-  - [ ] 8.1 Modify cmd/scheduler/main.go to use migration system
+- [x] 8. Update application startup integration
+  - [x] 8.1 Modify cmd/scheduler/main.go to use migration system
     - Initialize migration manager before HTTP server startup
     - Configure migration system with appropriate settings
     - Handle migration failures by exiting with non-zero status code
     - _Requirements: 8.1, 8.2_
 
-  - [ ] 8.2 Add migration logging to application startup
+  - [x] 8.2 Add migration logging to application startup
     - Log migration execution progress during application startup
     - Log successful migration completion with schema version
     - Log when no migrations are pending (database up to date)
     - _Requirements: 7.2, 7.4_
 
-  - [ ] 8.3 Write application startup integration tests
+  - [x] 8.3 Write application startup integration tests
     - Test application startup with pending migrations
     - Test application startup failure when migrations fail
     - Test application startup with no pending migrations

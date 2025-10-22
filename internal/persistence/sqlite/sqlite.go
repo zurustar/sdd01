@@ -86,40 +86,40 @@ func (s *Storage) Close() error {
 // Migrate applies database migrations using the migration system instead of embedded schema.
 // This replaces the previous embedded schema approach with a file-based migration system.
 func (s *Storage) Migrate(ctx context.Context) error {
-	migrations, err := loadEmbeddedMigrations(embeddedMigrations)
-	if err != nil {
-		return fmt.Errorf("sqlite: load migrations: %w", err)
+	// Set up migration system components
+	// Get the absolute path to the migrations directory relative to this package
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		return fmt.Errorf("sqlite: failed to determine package location")
 	}
-	if len(migrations) == 0 {
-		return nil
-	}
+	packageDir := filepath.Dir(filename)
+	migrationDir := filepath.Join(packageDir, "migrations")
 
-	statePath := s.migrationStatePath()
-	applied, err := loadMigrationState(statePath)
+	// Configure SQLite connection for migrations
+	sqliteConfig := migration.DefaultSQLiteConfig(s.path)
+	connectionManager := migration.NewConnectionManager(sqliteConfig)
+	
+	// Get database connection
+	db, err := connectionManager.GetConnection()
 	if err != nil {
-		return fmt.Errorf("sqlite: load migration state: %w", err)
-	}
-
-	db, err := sql.Open("sqlite", fmt.Sprintf("file:%s", s.path))
-	if err != nil {
-		return fmt.Errorf("sqlite: open migration connection: %w", err)
+		return fmt.Errorf("sqlite: failed to get database connection: %w", err)
 	}
 	defer func() {
-		_ = db.Close()
+		if cerr := db.Close(); cerr != nil {
+			// Log error but don't fail the migration
+		}
 	}()
 
-	for _, migration := range migrations {
-		if _, already := applied[migration.Version]; already {
-			continue
-		}
-		if err := runStatements(ctx, db, migration.Up); err != nil {
-			return fmt.Errorf("sqlite: apply migration %s: %w", migration.Version, err)
-		}
-		applied[migration.Version] = time.Now().UTC().Format(time.RFC3339Nano)
-		if err := saveMigrationState(statePath, applied); err != nil {
-			return fmt.Errorf("sqlite: persist migration state: %w", err)
-		}
+	// Create migration components
+	scanner := migration.NewFileScanner()
+	executor := migration.NewSQLiteExecutor(db)
+	migrationManager := migration.NewMigrationManager(scanner, executor, migrationDir)
+
+	// Execute migrations
+	if err := migrationManager.RunMigrations(ctx); err != nil {
+		return fmt.Errorf("sqlite: migration execution failed: %w", err)
 	}
+
 	return nil
 }
 
@@ -196,26 +196,6 @@ func saveMigrationState(path string, state map[string]string) error {
 	if err := os.Rename(tmpPath, path); err != nil {
 		return fmt.Errorf("sqlite: replace migration state: %w", err)
 	}
-
-	// Set up migration system components
-	// Get the absolute path to the migrations directory relative to this package
-	_, filename, _, ok := runtime.Caller(0)
-	if !ok {
-		return fmt.Errorf("sqlite: failed to determine package location")
-	}
-	packageDir := filepath.Dir(filename)
-	migrationDir := filepath.Join(packageDir, "migrations")
-
-	// Create migration components
-	scanner := migration.NewFileScanner()
-	executor := migration.NewSQLiteExecutor(db)
-	migrationManager := migration.NewMigrationManager(scanner, executor, migrationDir)
-
-	// Execute migrations
-	if err := migrationManager.RunMigrations(ctx); err != nil {
-		return fmt.Errorf("sqlite: migration execution failed: %w", err)
-	}
-
 	return nil
 }
 

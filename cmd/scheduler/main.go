@@ -20,6 +20,7 @@ import (
 	httptransport "github.com/example/enterprise-scheduler/internal/http"
 	"github.com/example/enterprise-scheduler/internal/persistence"
 	"github.com/example/enterprise-scheduler/internal/persistence/sqlite"
+	"github.com/example/enterprise-scheduler/internal/persistence/sqlite/migration"
 )
 
 func main() {
@@ -44,7 +45,7 @@ func main() {
 		}
 	}()
 
-	if err := applyMigrationsWithRetry(ctx, storage, logger); err != nil {
+	if err := runDatabaseMigrations(ctx, cfg.SQLiteDSN, logger); err != nil {
 		logger.Error("failed to apply migrations", "error", err)
 		os.Exit(1)
 	}
@@ -124,30 +125,97 @@ func randomHex(bytes int) string {
 	return hex.EncodeToString(buf)
 }
 
-func applyMigrationsWithRetry(ctx context.Context, storage *sqlite.Storage, logger *slog.Logger) error {
-	const attempts = 3
-	backoff := time.Second
-
-	for i := 1; i <= attempts; i++ {
-		logger.Info("sqlite migrate start", "attempt", i)
-		if err := storage.Migrate(ctx); err != nil {
-			logger.Error("sqlite migrate failed", "attempt", i, "error", err)
-			if i == attempts {
-				return err
-			}
-			select {
-			case <-time.After(backoff):
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-			if backoff < 8*time.Second {
-				backoff *= 2
-			}
-			continue
+func runDatabaseMigrations(ctx context.Context, databasePath string, logger *slog.Logger) error {
+	logger.Info("initializing database migration system")
+	
+	// Configure SQLite connection for migrations
+	sqliteConfig := migration.DefaultSQLiteConfig(databasePath)
+	connectionManager := migration.NewConnectionManager(sqliteConfig)
+	
+	// Configure migration settings
+	migrationConfig := migration.DefaultMigrationConfig("internal/persistence/sqlite/migrations")
+	
+	// Validate migration configuration
+	if err := migration.ValidateMigrationConfig(migrationConfig); err != nil {
+		logger.Error("invalid migration configuration", "error", err)
+		return fmt.Errorf("migration configuration validation failed: %w", err)
+	}
+	
+	// Get database connection
+	db, err := connectionManager.GetConnection()
+	if err != nil {
+		logger.Error("failed to establish database connection for migrations", "error", err)
+		return fmt.Errorf("failed to get database connection: %w", err)
+	}
+	defer func() {
+		if cerr := db.Close(); cerr != nil {
+			logger.Error("failed to close migration database connection", "error", cerr)
 		}
-		logger.Info("sqlite migrate done", "attempt", i)
+	}()
+	
+	// Initialize migration components
+	scanner := migration.NewFileScanner()
+	executor := migration.NewSQLiteExecutor(db)
+	migrationManager := migration.NewMigrationManager(scanner, executor, migrationConfig.MigrationDir)
+	
+	// Log migration system initialization
+	logger.Info("migration system initialized", 
+		"migration_dir", migrationConfig.MigrationDir,
+		"database_path", databasePath)
+	
+	// Log current schema version before migration
+	logger.Info("checking current database schema version")
+	if err := migrationManager.LogCurrentSchemaVersion(ctx); err != nil {
+		logger.Warn("could not determine current schema version", "error", err)
+	}
+	
+	// Check and log pending migrations
+	logger.Info("scanning for pending migrations")
+	pendingMigrations, err := migrationManager.GetPendingMigrations(ctx)
+	if err != nil {
+		logger.Error("failed to scan for pending migrations", "error", err)
+		return fmt.Errorf("failed to get pending migrations: %w", err)
+	}
+	
+	if len(pendingMigrations) == 0 {
+		logger.Info("database schema is up to date - no migrations pending")
 		return nil
 	}
+	
+	// Log migration execution progress
+	logger.Info("migration execution starting", 
+		"pending_count", len(pendingMigrations))
+	
+	for i, migration := range pendingMigrations {
+		logger.Info("migration queued for execution", 
+			"sequence", i+1,
+			"total", len(pendingMigrations),
+			"version", migration.Version,
+			"description", migration.Description)
+	}
+	
+	// Execute migrations with comprehensive error handling
+	migrationStartTime := time.Now()
+	logger.Info("executing database migrations")
+	
+	if err := migrationManager.RunMigrations(ctx); err != nil {
+		logger.Error("migration execution failed", "error", err)
+		return fmt.Errorf("migration execution failed: %w", err)
+	}
+	
+	migrationDuration := time.Since(migrationStartTime)
+	
+	// Log successful completion with final schema version
+	logger.Info("database migrations completed successfully", 
+		"execution_time", migrationDuration,
+		"migrations_applied", len(pendingMigrations))
+	
+	// Log final schema version
+	logger.Info("verifying final database schema version")
+	if err := migrationManager.LogCurrentSchemaVersion(ctx); err != nil {
+		logger.Warn("could not verify final schema version", "error", err)
+	}
+	
 	return nil
 }
 
